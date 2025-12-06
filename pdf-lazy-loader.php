@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://carfusepro.com
  * Description: Optimize PDF loading with lazy loading pattern and Facade design. Compatible with Redis Object Cache and FlyingPress.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: CarFusePro
  * Author URI: https://carfusepro.com
  * License: MIT
@@ -24,7 +24,7 @@ if (!defined('ABSPATH')) {
 // PLUGIN CONSTANTS
 // ============================================
 
-define('PDF_LAZY_LOADER_VERSION', '1.0.1');
+define('PDF_LAZY_LOADER_VERSION', '1.0.2');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -109,14 +109,54 @@ class PDF_Lazy_Loader {
      * Check dependencies
      */
     private function check_dependencies() {
-        // Check Redis Object Cache
-        $this->use_redis = defined('OBJECT_CACHE_REDIS_ENABLED') || 
-                          class_exists('WP_Object_Cache') || 
-                          function_exists('wp_cache_get');
+        // Check Redis Object Cache - FIXED: More accurate detection
+        $this->use_redis = $this->is_redis_active();
 
         // Check FlyingPress
         $this->use_flying_press = function_exists('flying_press') || 
                                   class_exists('Flying_Press');
+    }
+
+    /**
+     * Check if Redis is actually active
+     *
+     * @return bool
+     */
+    private function is_redis_active() {
+        // Method 1: Check if Redis Object Cache is enabled
+        if (defined('OBJECT_CACHE_REDIS_ENABLED') && OBJECT_CACHE_REDIS_ENABLED) {
+            return true;
+        }
+
+        // Method 2: Check if object-cache.php is using Redis
+        if (file_exists(WP_CONTENT_DIR . '/object-cache.php')) {
+            $content = file_get_contents(WP_CONTENT_DIR . '/object-cache.php');
+            if (strpos($content, 'redis') !== false || strpos($content, 'Redis') !== false) {
+                return true;
+            }
+        }
+
+        // Method 3: Try to test Redis connection
+        if (function_exists('wp_cache_get')) {
+            $test_key = '_pdf_lazy_loader_redis_test_' . time();
+            wp_cache_set($test_key, 'test', 'pdf_lazy_loader', 1);
+            $result = wp_cache_get($test_key, 'pdf_lazy_loader');
+            wp_cache_delete($test_key, 'pdf_lazy_loader');
+            
+            // If cache worked, check if it's Redis (Redis persists better)
+            if ($result === 'test') {
+                // Additional check: Redis Object Cache uses different class
+                global $wp_object_cache;
+                if (isset($wp_object_cache) && class_exists('WP_Object_Cache')) {
+                    $class_name = get_class($wp_object_cache);
+                    if (strpos($class_name, 'Redis') !== false) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -416,7 +456,7 @@ class PDF_Lazy_Loader {
             'buttonColor' => $this->options['button_color'],
             'buttonColorHover' => $this->options['button_color_hover'],
             'loadingTime' => $this->options['loading_time'],
-            'enableDownload' => $this->options['enable_download'],
+            'enableDownload' => (bool) $this->options['enable_download'],
         ];
 
         wp_localize_script('pdf-lazy-loader', 'pdfLazyLoaderData', $localized_data);
@@ -466,11 +506,12 @@ class PDF_Lazy_Loader {
         $sanitized['button_color'] = isset($settings['button_color']) ? sanitize_hex_color($settings['button_color']) : '#FF6B6B';
         $sanitized['button_color_hover'] = isset($settings['button_color_hover']) ? sanitize_hex_color($settings['button_color_hover']) : '#E63946';
         $sanitized['loading_time'] = isset($settings['loading_time']) ? absint($settings['loading_time']) : 1500;
-        $sanitized['enable_download'] = isset($settings['enable_download']) ? (bool) $settings['enable_download'] : true;
+        // FIXED: Proper checkbox handling - check for explicit value
+        $sanitized['enable_download'] = isset($settings['enable_download']) && $settings['enable_download'] === '1' ? true : false;
         $sanitized['enable_analytics'] = isset($settings['enable_analytics']) ? (bool) $settings['enable_analytics'] : true;
         $sanitized['cache_duration'] = isset($settings['cache_duration']) ? absint($settings['cache_duration']) : 7 * DAY_IN_SECONDS;
         $sanitized['exclude_pages'] = isset($settings['exclude_pages']) ? sanitize_textarea_field($settings['exclude_pages']) : '';
-        $sanitized['debug_mode'] = isset($settings['debug_mode']) ? (bool) $settings['debug_mode'] : false;
+        $sanitized['debug_mode'] = isset($settings['debug_mode']) && $settings['debug_mode'] === '1' ? true : false;
 
         return $sanitized;
     }
@@ -572,7 +613,7 @@ class PDF_Lazy_Loader {
                                 id="pdf_lazy_loader_enable_download" 
                                 name="pdf_lazy_loader_settings[enable_download]" 
                                 value="1" 
-                                <?php checked($this->options['enable_download'], 1); ?>
+                                <?php checked($this->options['enable_download'], true); ?>
                             >
                             <p class="description">
                                 <?php esc_html_e('Show the Download button in PDF preview', 'pdf-lazy-loader'); ?>
@@ -592,7 +633,7 @@ class PDF_Lazy_Loader {
                                 id="pdf_lazy_loader_debug" 
                                 name="pdf_lazy_loader_settings[debug_mode]" 
                                 value="1" 
-                                <?php checked($this->options['debug_mode'], 1); ?>
+                                <?php checked($this->options['debug_mode'], true); ?>
                             >
                             <p class="description">
                                 <?php esc_html_e('Enable logging to debug issues', 'pdf-lazy-loader'); ?>
