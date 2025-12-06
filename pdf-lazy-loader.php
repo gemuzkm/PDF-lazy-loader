@@ -264,7 +264,11 @@ class PDF_Lazy_Loader {
 
         // Генерируем скрипт
         ob_start();
-        include $this->plugin_dir . 'assets/js/pdf-lazy-loader.php';
+        ?>
+        <script>
+        <?php include $this->plugin_dir . 'assets/js/pdf-lazy-loader.js'; ?>
+        </script>
+        <?php
         $script = ob_get_clean();
 
         // Кешируем скрипт
@@ -411,6 +415,8 @@ class PDF_Lazy_Loader {
             'nonce' => wp_create_nonce('pdf_lazy_loader_nonce'),
             'debugMode' => $this->options['debug_mode'],
             'buttonColor' => $this->options['button_color'],
+            'buttonColorHover' => $this->options['button_color_hover'],
+            'loadingTime' => $this->options['loading_time'],
         ];
 
         wp_localize_script('pdf-lazy-loader', 'pdfLazyLoaderData', $localized_data);
