@@ -1,16 +1,16 @@
 /**
  * PDF Lazy Loader - Main JavaScript
- * Основной JavaScript код плагина
+ * Main JavaScript code of the plugin
  * 
- * Этот файл содержит всю логику загрузки PDF
- * Совместим с Redis Object Cache и FlyingPress
+ * This file contains all the logic for PDF loading
+ * Compatible with Redis Object Cache and FlyingPress
  */
 
 (function() {
     'use strict';
 
     /**
-     * PDF Lazy Loader - главный класс
+     * PDF Lazy Loader - main class
      */
     class PDFLazyLoader {
         constructor(options = {}) {
@@ -19,16 +19,18 @@
                 buttonColorHover: options.buttonColorHover || '#E63946',
                 loadingTime: options.loadingTime || 1500,
                 debugMode: options.debugMode || false,
+                enableDownload: options.enableDownload !== undefined ? options.enableDownload : true,
                 ...options
             };
 
             this.pdfContainers = [];
             this.loadedPDFs = new Map();
+            this.processedElements = new Set();
             this.init();
         }
 
         /**
-         * Инициализация
+         * Initialization
          */
         init() {
             this.log('PDF Lazy Loader initialized');
@@ -44,7 +46,7 @@
         }
 
         /**
-         * Отправить событие готовности
+         * Dispatch ready event
          */
         dispatchReady() {
             const event = new CustomEvent('pdfLazyLoaderReady', {
@@ -54,7 +56,7 @@
         }
 
         /**
-         * Наблюдение за изменениями DOM (для AJAX)
+         * Observe DOM changes for AJAX content
          */
         observeMutations() {
             const observer = new MutationObserver((mutations) => {
@@ -65,9 +67,9 @@
                                 const pdfs = node.querySelectorAll('[data-pdfemb-lazy]');
                                 pdfs.forEach((pdf) => this.processPDF(pdf));
 
-                                // Проверяем контейнеры PDF Embedder
-                                const containers = node.querySelectorAll('[class*="wppdfemb-frame-container"]');
-                                containers.forEach((container) => this.processPDFContainer(container));
+                                // Check for PDF Embedder containers
+                                const containers = node.querySelectorAll('iframe.pdfembed-iframe');
+                                containers.forEach((container) => this.processIframe(container));
                             }
                         });
                     }
@@ -81,52 +83,53 @@
         }
 
         /**
-         * Основная функция: обработка всех PDF контейнеров
+         * Main function: process all PDF containers
          */
         setupPDFs() {
-            // Метод 1: Поиск по классу контейнера (PDF Embedder Premium)
-            const pdfFrameContainers = document.querySelectorAll('[class*="wppdfemb-frame-container"]');
-            pdfFrameContainers.forEach((container) => this.processPDFContainer(container));
+            // Method 1: Find by iframe class (PDF Embedder)
+            const iframes = document.querySelectorAll('iframe.pdfembed-iframe');
+            iframes.forEach((iframe) => {
+                if (!this.processedElements.has(iframe)) {
+                    this.processIframe(iframe);
+                    this.processedElements.add(iframe);
+                }
+            });
 
-            // Метод 2: Поиск по data-атрибутам
+            // Method 2: Find by data-attributes
             const dataPDFs = document.querySelectorAll('[data-pdfemb-lazy="true"]');
-            dataPDFs.forEach((pdf) => this.processPDF(pdf));
-
-            // Метод 3: Поиск PDF iframe по src
-            const iframes = document.querySelectorAll('iframe[src*="pdfemb-data"]');
-            iframes.forEach((iframe) => this.wrapIframe(iframe));
+            dataPDFs.forEach((pdf) => {
+                if (!this.processedElements.has(pdf)) {
+                    this.processPDF(pdf);
+                    this.processedElements.add(pdf);
+                }
+            });
 
             this.log(`Found ${this.pdfContainers.length} PDF(s)`);
         }
 
         /**
-         * Обработка контейнера PDF
-         */
-        processPDFContainer(container) {
-            const iframe = container.querySelector('iframe.pdfembed-iframe');
-            if (!iframe) return;
-            this.wrapIframe(iframe);
-        }
-
-        /**
-         * Обработка отдельного PDF
+         * Process individual PDF
          */
         processPDF(element) {
             if (element.tagName === 'IFRAME') {
-                this.wrapIframe(element);
+                this.processIframe(element);
             }
         }
 
         /**
-         * Заборачиваем iframe в Facade
+         * Process iframe and wrap it in Facade
          */
-        wrapIframe(iframe) {
+        processIframe(iframe) {
+            // Check if already processed
             if (iframe.closest('.pdf-facade-wrapper')) {
                 return;
             }
 
             const pdfUrl = this.extractPDFUrl(iframe.src);
-            if (!pdfUrl) return;
+            if (!pdfUrl) {
+                this.log('Could not extract PDF URL from: ' + iframe.src);
+                return;
+            }
 
             const wrapper = this.createFacade(iframe, pdfUrl);
             iframe.parentNode.insertBefore(wrapper, iframe);
@@ -141,10 +144,12 @@
                 pdfUrl: pdfUrl,
                 isLoaded: false,
             });
+
+            this.log('Processed PDF from: ' + pdfUrl);
         }
 
         /**
-         * Создание Facade элемента
+         * Create Facade element
          */
         createFacade(iframe, pdfUrl) {
             const wrapper = document.createElement('div');
@@ -153,6 +158,22 @@
             const width = iframe.style.width || '100%';
             const height = iframe.style.height || '600px';
             const maxWidth = iframe.style.maxWidth || '100%';
+
+            const downloadBtn = this.options.enableDownload 
+                ? `<button class="pdf-download-button" type="button" style="
+                    padding: 12px 24px;
+                    background: white;
+                    color: #333;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                ">
+                    ⬇ Download
+                </button>`
+                : '';
 
             wrapper.innerHTML = `
                 <div class="pdf-facade-container" style="
@@ -198,13 +219,13 @@
                             color: #333;
                             font-size: 18px;
                             font-weight: 600;
-                        ">PDF Документ</h3>
+                        ">PDF Document</h3>
 
                         <p class="pdf-facade-subtitle" style="
                             margin: 0 0 20px 0;
                             color: #666;
                             font-size: 14px;
-                        ">Нажмите кнопку ниже для загрузки</p>
+                        ">Click the button below to load the document</p>
 
                         <div class="pdf-loading-indicator" style="
                             display: none;
@@ -223,7 +244,7 @@
                                 margin: 10px 0 0 0;
                                 color: #666;
                                 font-size: 12px;
-                            ">Загрузка PDF...</p>
+                            ">Loading PDF...</p>
                         </div>
 
                         <div class="pdf-facade-buttons" style="
@@ -243,28 +264,16 @@
                                 cursor: pointer;
                                 transition: all 0.3s ease;
                             ">
-                                📖 Просмотреть PDF
+                                📖 View PDF
                             </button>
-                            <button class="pdf-download-button" type="button" style="
-                                padding: 12px 24px;
-                                background: white;
-                                color: #333;
-                                border: 1px solid #ddd;
-                                border-radius: 4px;
-                                font-size: 14px;
-                                font-weight: 600;
-                                cursor: pointer;
-                                transition: all 0.3s ease;
-                            ">
-                                ⬇ Скачать
-                            </button>
+                            ${downloadBtn}
                         </div>
 
                         <p class="pdf-facade-info" style="
                             margin: 20px 0 0 0;
                             color: #999;
                             font-size: 12px;
-                        ">Файл будет загружен при первом обращении</p>
+                        ">Document will be loaded on first access</p>
                     </div>
                 </div>
             `;
@@ -275,7 +284,9 @@
             const dlBtn = wrapper.querySelector('.pdf-download-button');
 
             viewBtn.addEventListener('click', () => this.loadPDF(wrapper.dataset.iframeId, 'view'));
-            dlBtn.addEventListener('click', () => this.downloadPDF(pdfUrl));
+            if (dlBtn) {
+                dlBtn.addEventListener('click', () => this.downloadPDF(pdfUrl));
+            }
 
             viewBtn.addEventListener('mouseenter', (e) => {
                 e.target.style.background = this.options.buttonColorHover;
@@ -286,20 +297,22 @@
                 e.target.style.transform = 'translateY(0)';
             });
 
-            dlBtn.addEventListener('mouseenter', (e) => {
-                e.target.style.borderColor = this.options.buttonColor;
-                e.target.style.color = this.options.buttonColor;
-            });
-            dlBtn.addEventListener('mouseleave', (e) => {
-                e.target.style.borderColor = '#ddd';
-                e.target.style.color = '#333';
-            });
+            if (dlBtn) {
+                dlBtn.addEventListener('mouseenter', (e) => {
+                    e.target.style.borderColor = this.options.buttonColor;
+                    e.target.style.color = this.options.buttonColor;
+                });
+                dlBtn.addEventListener('mouseleave', (e) => {
+                    e.target.style.borderColor = '#ddd';
+                    e.target.style.color = '#333';
+                });
+            }
 
             return wrapper;
         }
 
         /**
-         * Загрузка PDF при клике
+         * Load PDF on button click (NOT on page load)
          */
         loadPDF(wrapperId, mode = 'view') {
             const pdfEntry = this.pdfContainers.find((p) => p.id === wrapperId);
@@ -317,6 +330,7 @@
             buttons.style.display = 'none';
             loadingIndicator.style.display = 'block';
 
+            // Load after delay
             setTimeout(() => {
                 pdfEntry.isLoaded = true;
                 this.showPDF(pdfEntry);
@@ -324,7 +338,7 @@
         }
 
         /**
-         * Отображение загруженного PDF
+         * Show loaded PDF
          */
         showPDF(pdfEntry) {
             const wrapper = pdfEntry.wrapper;
@@ -349,10 +363,12 @@
             setTimeout(() => {
                 iframe.dispatchEvent(new Event('resize'));
             }, 100);
+
+            this.log('PDF loaded and displayed');
         }
 
         /**
-         * Загрузка PDF файла (скачивание)
+         * Download PDF file
          */
         downloadPDF(pdfUrl) {
             if (!pdfUrl) return;
@@ -364,7 +380,7 @@
         }
 
         /**
-         * Извлечение URL PDF из iframe src
+         * Extract PDF URL from iframe src
          */
         extractPDFUrl(iframeSrc) {
             if (!iframeSrc) return null;
@@ -389,7 +405,7 @@
         }
 
         /**
-         * Декодирование base64 PDF URL
+         * Decode base64 PDF URL
          */
         decodeBase64PDF(encoded) {
             try {
@@ -404,7 +420,7 @@
         }
 
         /**
-         * Добавление CSS для спинера загрузки
+         * Add CSS for loading spinner
          */
         addSpinnerAnimation() {
             if (document.getElementById('pdf-lazy-loader-styles')) return;
@@ -477,14 +493,14 @@
         }
 
         /**
-         * Генератор уникальных ID
+         * Generate unique ID
          */
         generateUID() {
             return 'pdf-' + Math.random().toString(36).substr(2, 9);
         }
 
         /**
-         * Логирование
+         * Logging
          */
         log(message) {
             if (this.options.debugMode) {
@@ -493,7 +509,7 @@
         }
     }
 
-    // Инициализация
+    // Initialize
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             new PDFLazyLoader(typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {});
@@ -502,6 +518,6 @@
         new PDFLazyLoader(typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {});
     }
 
-    // Экспорт для использования
+    // Export for usage
     window.PDFLazyLoader = PDFLazyLoader;
 })();

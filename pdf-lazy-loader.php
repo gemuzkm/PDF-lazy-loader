@@ -2,8 +2,8 @@
 /**
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://carfusepro.com
- * Description: Оптимизация загрузки PDF файлов с использованием паттерна Facade и ленивой загрузки. Совместим с Redis Object Cache и FlyingPress.
- * Version: 1.0.0
+ * Description: Optimize PDF loading with lazy loading pattern and Facade design. Compatible with Redis Object Cache and FlyingPress.
+ * Version: 1.0.1
  * Author: CarFusePro
  * Author URI: https://carfusepro.com
  * License: MIT
@@ -15,77 +15,77 @@
  * Network: false
  */
 
-// Защита от прямого доступа
+// Protect against direct access
 if (!defined('ABSPATH')) {
     exit;
 }
 
 // ============================================
-// КОНСТАНТЫ ПЛАГИНА
+// PLUGIN CONSTANTS
 // ============================================
 
-define('PDF_LAZY_LOADER_VERSION', '1.0.0');
+define('PDF_LAZY_LOADER_VERSION', '1.0.1');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 // ============================================
-// КЛАСС ПЛАГИНА
+// MAIN PLUGIN CLASS
 // ============================================
 
 class PDF_Lazy_Loader {
 
     /**
-     * Версия плагина
+     * Plugin version
      *
      * @var string
      */
     private $version = PDF_LAZY_LOADER_VERSION;
 
     /**
-     * Путь к плагину
+     * Plugin directory path
      *
      * @var string
      */
     private $plugin_dir = PDF_LAZY_LOADER_PLUGIN_DIR;
 
     /**
-     * URL плагина
+     * Plugin URL
      *
      * @var string
      */
     private $plugin_url = PDF_LAZY_LOADER_PLUGIN_URL;
 
     /**
-     * Параметры плагина
+     * Plugin options
      *
      * @var array
      */
     private $options = [];
 
     /**
-     * Использовать Redis кеш
+     * Use Redis cache
      *
      * @var bool
      */
     private $use_redis = false;
 
     /**
-     * Использовать FlyingPress
+     * Use FlyingPress
      *
      * @var bool
      */
     private $use_flying_press = false;
 
     /**
-     * Singleton экземпляр
+     * Singleton instance
      *
      * @var PDF_Lazy_Loader
      */
     private static $instance = null;
 
     /**
-     * Получить singleton экземпляр
+     * Get singleton instance
      *
      * @return PDF_Lazy_Loader
      */
@@ -97,7 +97,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Конструктор
+     * Constructor
      */
     private function __construct() {
         $this->check_dependencies();
@@ -106,21 +106,21 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Проверка зависимостей
+     * Check dependencies
      */
     private function check_dependencies() {
-        // Проверяем Redis Object Cache
+        // Check Redis Object Cache
         $this->use_redis = defined('OBJECT_CACHE_REDIS_ENABLED') || 
                           class_exists('WP_Object_Cache') || 
                           function_exists('wp_cache_get');
 
-        // Проверяем FlyingPress
+        // Check FlyingPress
         $this->use_flying_press = function_exists('flying_press') || 
                                   class_exists('Flying_Press');
     }
 
     /**
-     * Загрузить параметры плагина
+     * Load plugin options
      */
     private function load_options() {
         $defaults = [
@@ -129,6 +129,7 @@ class PDF_Lazy_Loader {
             'button_color' => '#FF6B6B',
             'button_color_hover' => '#E63946',
             'loading_time' => 1500,
+            'enable_download' => true,
             'enable_analytics' => true,
             'cache_duration' => 7 * DAY_IN_SECONDS,
             'exclude_pages' => '',
@@ -141,19 +142,19 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Инициализация хуков
+     * Initialize hooks
      */
     private function init_hooks() {
-        // Регистрация
+        // Registration
         register_activation_hook(__FILE__, [$this, 'activate']);
         register_deactivation_hook(__FILE__, [$this, 'deactivate']);
         register_uninstall_hook(__FILE__, [__CLASS__, 'uninstall']);
 
-        // Фронтенд
+        // Frontend
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_action('wp_footer', [$this, 'inject_script'], 100);
 
-        // Админ
+        // Admin
         add_action('admin_menu', [$this, 'add_admin_menu']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
@@ -162,46 +163,45 @@ class PDF_Lazy_Loader {
         add_action('wp_ajax_pdf_lazy_loader_stats', [$this, 'ajax_stats']);
         add_action('wp_ajax_nopriv_pdf_lazy_loader_stats', [$this, 'ajax_stats']);
 
-        // Совместимость с кешами
+        // Cache compatibility
         add_action('flying_press_after_cache_purge', [$this, 'clear_cache']);
         add_action('wp_cache_flush', [$this, 'clear_cache']);
 
-        // Плагины
+        // Plugins
         add_filter('plugin_action_links_' . PDF_LAZY_LOADER_PLUGIN_BASENAME, [$this, 'add_action_links']);
         add_filter('plugin_row_meta', [$this, 'add_plugin_row_meta'], 10, 2);
     }
 
     /**
-     * Активация плагина
+     * Plugin activation
      */
     public function activate() {
-        // Создаём таблицу для статистики (если нужна)
+        // Create tables
         $this->create_tables();
 
-        // Добавляем параметры по умолчанию
+        // Add default options
         if (!get_option('pdf_lazy_loader_settings')) {
             update_option('pdf_lazy_loader_settings', []);
         }
 
-        // Очищаем кеши
+        // Clear cache
         if (function_exists('wp_cache_flush')) {
             wp_cache_flush();
         }
 
-        // Уведомление FlyingPress
+        // Notify FlyingPress
         if (function_exists('flying_press')) {
             do_action('flying_press_after_update');
         }
 
-        // Логируем активацию
         $this->log('Plugin activated');
     }
 
     /**
-     * Деактивация плагина
+     * Plugin deactivation
      */
     public function deactivate() {
-        // Очищаем кеши при деактивации
+        // Clear cache on deactivation
         if (function_exists('wp_cache_flush')) {
             wp_cache_flush();
         }
@@ -210,21 +210,21 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Удаление плагина
+     * Plugin uninstall
      */
     public static function uninstall() {
-        // Удаляем параметры
+        // Remove options
         delete_option('pdf_lazy_loader_settings');
         delete_option('pdf_lazy_loader_stats');
 
-        // Очищаем кеши
+        // Clear cache
         if (function_exists('wp_cache_flush')) {
             wp_cache_flush();
         }
     }
 
     /**
-     * Создание таблиц базы данных
+     * Create database tables
      */
     private function create_tables() {
         global $wpdb;
@@ -247,22 +247,22 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Инжектировать основной скрипт
+     * Inject main script
      */
     public function inject_script() {
-        // Проверяем, нужно ли инжектировать
+        // Check if should inject
         if (!$this->should_inject_script()) {
             return;
         }
 
-        // Проверяем кеш
+        // Check cache
         $script_cached = $this->get_cached_script();
         if ($script_cached) {
-            echo $script_cached; // WPCS: XSS OK - вывод кеша
+            echo $script_cached; // WPCS: XSS OK
             return;
         }
 
-        // Генерируем скрипт
+        // Generate script
         ob_start();
         ?>
         <script>
@@ -271,29 +271,29 @@ class PDF_Lazy_Loader {
         <?php
         $script = ob_get_clean();
 
-        // Кешируем скрипт
+        // Cache script
         $this->cache_script($script);
 
         echo $script; // WPCS: XSS OK
     }
 
     /**
-     * Проверить, нужно ли инжектировать скрипт
+     * Check if should inject script
      *
      * @return bool
      */
     private function should_inject_script() {
-        // Проверяем, активирован ли плагин
+        // Check if enabled
         if (!$this->options['enabled']) {
             return false;
         }
 
-        // Не инжектируем в админке
+        // Don't inject in admin
         if (is_admin()) {
             return false;
         }
 
-        // Проверяем исключённые страницы
+        // Check excluded pages
         if ($this->is_excluded_page()) {
             return false;
         }
@@ -302,7 +302,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Проверить, исключена ли текущая страница
+     * Check if current page is excluded
      *
      * @return bool
      */
@@ -321,7 +321,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Получить кешированный скрипт
+     * Get cached script
      *
      * @return string|false
      */
@@ -332,12 +332,12 @@ class PDF_Lazy_Loader {
             return wp_cache_get($cache_key, 'pdf_lazy_loader');
         }
 
-        // Fallback на transient
+        // Fallback to transient
         return get_transient($cache_key);
     }
 
     /**
-     * Кешировать скрипт
+     * Cache script
      *
      * @param string $script
      */
@@ -353,7 +353,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Очистить кеш
+     * Clear cache
      */
     public function clear_cache() {
         $cache_key = 'pdf_lazy_loader_script_v' . $this->version;
@@ -364,12 +364,11 @@ class PDF_Lazy_Loader {
             delete_transient($cache_key);
         }
 
-        // Логируем очистку
         $this->log('Cache cleared');
     }
 
     /**
-     * Подключить стили и скрипты в админ
+     * Enqueue admin scripts
      *
      * @param string $page
      */
@@ -402,14 +401,14 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Подключить стили и скрипты на фронтенд
+     * Enqueue frontend scripts
      */
     public function enqueue_scripts() {
         if (!$this->should_inject_script()) {
             return;
         }
 
-        // Локализуем переменные для скрипта
+        // Localize variables for script
         $localized_data = [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('pdf_lazy_loader_nonce'),
@@ -417,13 +416,14 @@ class PDF_Lazy_Loader {
             'buttonColor' => $this->options['button_color'],
             'buttonColorHover' => $this->options['button_color_hover'],
             'loadingTime' => $this->options['loading_time'],
+            'enableDownload' => $this->options['enable_download'],
         ];
 
         wp_localize_script('pdf-lazy-loader', 'pdfLazyLoaderData', $localized_data);
     }
 
     /**
-     * Добавить меню администратора
+     * Add admin menu
      */
     public function add_admin_menu() {
         add_options_page(
@@ -436,7 +436,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Регистрация параметров
+     * Register settings
      */
     public function register_settings() {
         register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_settings', [
@@ -453,7 +453,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Санитизация параметров
+     * Sanitize settings
      *
      * @param array $settings
      * @return array
@@ -466,6 +466,7 @@ class PDF_Lazy_Loader {
         $sanitized['button_color'] = isset($settings['button_color']) ? sanitize_hex_color($settings['button_color']) : '#FF6B6B';
         $sanitized['button_color_hover'] = isset($settings['button_color_hover']) ? sanitize_hex_color($settings['button_color_hover']) : '#E63946';
         $sanitized['loading_time'] = isset($settings['loading_time']) ? absint($settings['loading_time']) : 1500;
+        $sanitized['enable_download'] = isset($settings['enable_download']) ? (bool) $settings['enable_download'] : true;
         $sanitized['enable_analytics'] = isset($settings['enable_analytics']) ? (bool) $settings['enable_analytics'] : true;
         $sanitized['cache_duration'] = isset($settings['cache_duration']) ? absint($settings['cache_duration']) : 7 * DAY_IN_SECONDS;
         $sanitized['exclude_pages'] = isset($settings['exclude_pages']) ? sanitize_textarea_field($settings['exclude_pages']) : '';
@@ -475,7 +476,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Отрендерить страницу параметров
+     * Render settings page
      */
     public function render_settings_page() {
         if (!current_user_can('manage_options')) {
@@ -561,6 +562,26 @@ class PDF_Lazy_Loader {
 
                     <tr>
                         <th scope="row">
+                            <label for="pdf_lazy_loader_enable_download">
+                                <?php esc_html_e('Enable Download Button', 'pdf-lazy-loader'); ?>
+                            </label>
+                        </th>
+                        <td>
+                            <input 
+                                type="checkbox" 
+                                id="pdf_lazy_loader_enable_download" 
+                                name="pdf_lazy_loader_settings[enable_download]" 
+                                value="1" 
+                                <?php checked($this->options['enable_download'], 1); ?>
+                            >
+                            <p class="description">
+                                <?php esc_html_e('Show the Download button in PDF preview', 'pdf-lazy-loader'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
                             <label for="pdf_lazy_loader_debug">
                                 <?php esc_html_e('Debug Mode', 'pdf-lazy-loader'); ?>
                             </label>
@@ -613,14 +634,14 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Отрендерить секцию параметров
+     * Render settings section
      */
     public function render_settings_section() {
         echo '<p>' . esc_html__('Configure PDF Lazy Loader settings below', 'pdf-lazy-loader') . '</p>';
     }
 
     /**
-     * AJAX обработчик статистики
+     * AJAX stats handler
      */
     public function ajax_stats() {
         check_ajax_referer('pdf_lazy_loader_nonce');
@@ -636,7 +657,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Добавить ссылки действий в плагины
+     * Add action links
      *
      * @param array $links
      * @return array
@@ -649,7 +670,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Добавить мета информацию в плагины
+     * Add plugin row meta
      *
      * @param array $links
      * @param string $file
@@ -665,7 +686,7 @@ class PDF_Lazy_Loader {
     }
 
     /**
-     * Логирование
+     * Log message
      *
      * @param string $message
      * @param string $level
@@ -684,7 +705,7 @@ class PDF_Lazy_Loader {
 }
 
 // ============================================
-// ИНИЦИАЛИЗАЦИЯ ПЛАГИНА
+// PLUGIN INITIALIZATION
 // ============================================
 
 function pdf_lazy_loader_init() {
@@ -694,11 +715,11 @@ function pdf_lazy_loader_init() {
 add_action('plugins_loaded', 'pdf_lazy_loader_init', 10);
 
 // ============================================
-// ГЛОБАЛЬНАЯ ФУНКЦИЯ
+// GLOBAL FUNCTION
 // ============================================
 
 /**
- * Получить экземпляр плагина
+ * Get plugin instance
  *
  * @return PDF_Lazy_Loader
  */
