@@ -25,11 +25,12 @@
         // Обновление превью при изменении настроек
         updatePreviewOnChange();
         
-        // Автоматическое скрытие уведомлений
-        autoHideNotifications();
-        
-        // Удаление дублирующихся уведомлений
-        removeDuplicateNotifications();
+        // Автоматическое скрытие уведомлений (только наших, не системных)
+        // Запускаем с небольшой задержкой, чтобы не мешать системным уведомлениям
+        setTimeout(function() {
+            autoHideNotifications();
+            removeDuplicateNotifications();
+        }, 100);
     });
 
     /**
@@ -333,14 +334,28 @@
 
     /**
      * Автоматическое скрытие уведомлений через 5 секунд
+     * Исключаем системные уведомления WordPress (REST API, etc.)
      */
     function autoHideNotifications() {
         $('.notice, .updated, .error').each(function() {
             var $notice = $(this);
+            var noticeText = $notice.text().trim();
+            
+            // Пропускаем системные уведомления WordPress (REST API, security warnings, etc.)
+            if (noticeText.includes('REST API') || 
+                noticeText.includes('WordPress REST API') ||
+                noticeText.includes('network error') ||
+                noticeText.includes('security plugin') ||
+                noticeText.includes('web server configuration') ||
+                noticeText.includes('ad-blocker extension')) {
+                // Не скрываем системные уведомления
+                return;
+            }
+            
             // Показываем уведомление с анимацией
             $notice.fadeIn();
             
-            // Автоматически скрываем через 5 секунд
+            // Автоматически скрываем через 5 секунд только наши уведомления
             setTimeout(function() {
                 $notice.fadeOut(300, function() {
                     $(this).remove();
@@ -351,12 +366,24 @@
 
     /**
      * Удаление дублирующихся уведомлений
+     * Исключаем системные уведомления WordPress
      */
     function removeDuplicateNotifications() {
         var seenTexts = {};
         $('.notice, .updated, .error').each(function() {
             var $notice = $(this);
             var noticeText = $notice.text().trim();
+            
+            // Пропускаем системные уведомления WordPress
+            if (noticeText.includes('REST API') || 
+                noticeText.includes('WordPress REST API') ||
+                noticeText.includes('network error') ||
+                noticeText.includes('security plugin') ||
+                noticeText.includes('web server configuration') ||
+                noticeText.includes('ad-blocker extension')) {
+                // Не удаляем системные уведомления
+                return;
+            }
             
             // Если уведомление с таким текстом уже видели, удаляем дубликат
             if (seenTexts[noticeText]) {
