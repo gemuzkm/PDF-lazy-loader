@@ -1,8 +1,18 @@
 <?php
 /**
- * PDF Lazy Loader - Main Plugin File
+ * Plugin Name: PDF Lazy Loader
+ * Plugin URI: https://github.com/your-username/pdf-lazy-loader
+ * Description: Optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks.
  * Version: 1.0.5
- * Fixed: Proper WordPress data enqueue
+ * Author: Your Name
+ * Author URI: https://example.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: pdf-lazy-loader
+ * Domain Path: /languages
+ * Requires at least: 5.0
+ * Tested up to: 6.4
+ * Requires PHP: 7.2
  */
 
 if (!defined('ABSPATH')) {
@@ -18,6 +28,7 @@ add_action('admin_menu', 'pdf_lazy_loader_add_admin_menu');
 add_action('admin_init', 'pdf_lazy_loader_register_settings');
 add_action('admin_enqueue_scripts', 'pdf_lazy_loader_enqueue_admin_scripts');
 add_action('wp_enqueue_scripts', 'pdf_lazy_loader_enqueue_frontend_scripts');
+add_filter('pre_update_option_pdf_lazy_loader_enable_download', 'pdf_lazy_loader_update_checkbox', 10, 2);
 
 /**
  * Add admin menu page
@@ -36,10 +47,44 @@ function pdf_lazy_loader_add_admin_menu() {
  * Register settings
  */
 function pdf_lazy_loader_register_settings() {
-    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color');
-    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color_hover');
-    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_loading_time');
-    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_enable_download');
+    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color', array(
+        'type' => 'string',
+        'sanitize_callback' => 'sanitize_hex_color',
+        'default' => '#FF6B6B'
+    ));
+    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color_hover', array(
+        'type' => 'string',
+        'sanitize_callback' => 'sanitize_hex_color',
+        'default' => '#E63946'
+    ));
+    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_loading_time', array(
+        'type' => 'integer',
+        'sanitize_callback' => 'absint',
+        'default' => 1500
+    ));
+    register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_enable_download', array(
+        'type' => 'boolean',
+        'sanitize_callback' => 'pdf_lazy_loader_sanitize_checkbox',
+        'default' => false
+    ));
+}
+
+/**
+ * Sanitize checkbox value
+ */
+function pdf_lazy_loader_sanitize_checkbox($value) {
+    return $value === '1' || $value === 1 || $value === true;
+}
+
+/**
+ * Update checkbox option - handle unchecked state
+ */
+function pdf_lazy_loader_update_checkbox($value, $old_value) {
+    // If checkbox is not in POST, it means it's unchecked
+    if (!isset($_POST['pdf_lazy_loader_enable_download'])) {
+        return false;
+    }
+    return $value === '1' || $value === 1 || $value === true;
 }
 
 /**
@@ -50,7 +95,7 @@ function pdf_lazy_loader_get_settings() {
         'buttonColor' => get_option('pdf_lazy_loader_button_color', '#FF6B6B'),
         'buttonColorHover' => get_option('pdf_lazy_loader_button_color_hover', '#E63946'),
         'loadingTime' => intval(get_option('pdf_lazy_loader_loading_time', 1500)),
-        'enableDownload' => get_option('pdf_lazy_loader_enable_download', false) ? true : false,
+        'enableDownload' => (bool) get_option('pdf_lazy_loader_enable_download', false),
     );
 }
 
@@ -66,11 +111,19 @@ function pdf_lazy_loader_enqueue_admin_scripts($hook) {
     // Get current settings
     $settings = pdf_lazy_loader_get_settings();
 
+    // Enqueue admin CSS
+    wp_enqueue_style(
+        'pdf-lazy-loader-admin',
+        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/admin.css',
+        array(),
+        PDF_LAZY_LOADER_VERSION
+    );
+
     // Enqueue admin script
     wp_enqueue_script(
         'pdf-lazy-loader-admin',
-        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/pdf-lazy-loader-admin.js',
-        array(),
+        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/admin.js',
+        array('jquery'),
         PDF_LAZY_LOADER_VERSION,
         true
     );
