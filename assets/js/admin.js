@@ -24,6 +24,12 @@
         
         // Обновление превью при изменении настроек
         updatePreviewOnChange();
+        
+        // Автоматическое скрытие уведомлений
+        autoHideNotifications();
+        
+        // Удаление дублирующихся уведомлений
+        removeDuplicateNotifications();
     });
 
     /**
@@ -323,6 +329,42 @@
                 alert('In the frontend, this would download the PDF file.');
             });
         }
+    }
+
+    /**
+     * Автоматическое скрытие уведомлений через 5 секунд
+     */
+    function autoHideNotifications() {
+        $('.notice, .updated, .error').each(function() {
+            var $notice = $(this);
+            // Показываем уведомление с анимацией
+            $notice.fadeIn();
+            
+            // Автоматически скрываем через 5 секунд
+            setTimeout(function() {
+                $notice.fadeOut(300, function() {
+                    $(this).remove();
+                });
+            }, 5000);
+        });
+    }
+
+    /**
+     * Удаление дублирующихся уведомлений
+     */
+    function removeDuplicateNotifications() {
+        var seenTexts = {};
+        $('.notice, .updated, .error').each(function() {
+            var $notice = $(this);
+            var noticeText = $notice.text().trim();
+            
+            // Если уведомление с таким текстом уже видели, удаляем дубликат
+            if (seenTexts[noticeText]) {
+                $notice.remove();
+            } else {
+                seenTexts[noticeText] = true;
+            }
+        });
     }
 
 })(jQuery);

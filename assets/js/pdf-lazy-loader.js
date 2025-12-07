@@ -128,7 +128,9 @@
          * Extract PDF URL from iframe
          */
         extractPDFUrl(iframe) {
-            let pdfUrl = iframe.getAttribute('src') || 
+            // First check if src was intercepted and saved
+            let pdfUrl = iframe.getAttribute('data-pdf-lazy-original-src') || 
+                        iframe.getAttribute('src') || 
                         iframe.getAttribute('data-src') || 
                         '';
 
@@ -252,8 +254,15 @@
             // Mark as processed
             this.processedIframes.add(iframe);
 
-            // Save original src BEFORE extracting URL
-            const originalSrc = iframe.getAttribute('src') || '';
+            // Get original src - check if it was intercepted by inline script
+            let originalSrc = iframe.getAttribute('data-pdf-lazy-original-src') || 
+                            iframe.getAttribute('src') || 
+                            '';
+            
+            // If intercepted, remove the marker
+            if (iframe.hasAttribute('data-pdf-lazy-intercepted')) {
+                iframe.removeAttribute('data-pdf-lazy-intercepted');
+            }
             
             // Get iframe dimensions BEFORE doing anything else!
             const computedStyle = window.getComputedStyle(iframe);
@@ -360,8 +369,15 @@
             console.log('[PDF] Original src:', originalSrc);
             console.log('[PDF] *** IFRAME HIDDEN IMMEDIATELY ***');
 
-            // Remove src immediately to prevent loading
-            iframe.removeAttribute('src');
+            // Remove src immediately to prevent loading (if not already removed by inline script)
+            if (iframe.hasAttribute('src')) {
+                iframe.removeAttribute('src');
+            }
+            
+            // Clean up interception markers (keep data-pdf-lazy-original-src for restoration)
+            if (iframe.hasAttribute('data-pdf-lazy-intercepted')) {
+                iframe.removeAttribute('data-pdf-lazy-intercepted');
+            }
             
             // Hide iframe completely - use multiple methods to ensure it's hidden
             iframe.style.display = 'none';

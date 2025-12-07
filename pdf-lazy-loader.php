@@ -176,6 +176,110 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
     // Get current settings
     $settings = pdf_lazy_loader_get_settings();
 
+    // Add inline script in head to prevent PDF loading immediately
+    // This must run before any iframes start loading
+    add_action('wp_head', function() {
+        ?>
+        <script type="text/javascript">
+        (function() {
+            'use strict';
+            // Immediately intercept PDF iframes to prevent loading
+            // This runs as early as possible to prevent any network requests
+            function interceptPDFIframe(iframe) {
+                const src = iframe.getAttribute('src') || '';
+                // Check if this is a PDF iframe
+                if (src && (
+                    src.includes('.pdf') || 
+                    src.includes('application/pdf') || 
+                    src.includes('pdf-embedder') || 
+                    src.includes('pdfembed') || 
+                    src.includes('pdfemb-data') ||
+                    src.includes('pdfjs') ||
+                    src.includes('viewer.html')
+                )) {
+                    // Store original src and prevent loading IMMEDIATELY
+                    if (!iframe.hasAttribute('data-pdf-lazy-original-src')) {
+                        iframe.setAttribute('data-pdf-lazy-original-src', src);
+                        iframe.removeAttribute('src');
+                        // Mark as intercepted
+                        iframe.setAttribute('data-pdf-lazy-intercepted', '1');
+                        return true; // Intercepted
+                    }
+                }
+                return false; // Not a PDF iframe or already intercepted
+            }
+            
+            // Intercept existing iframes immediately
+            function interceptPDFIframes() {
+                const iframes = document.querySelectorAll('iframe');
+                let intercepted = 0;
+                iframes.forEach(function(iframe) {
+                    if (interceptPDFIframe(iframe)) {
+                        intercepted++;
+                    }
+                });
+                if (intercepted > 0) {
+                    console.log('[PDF Interceptor] Intercepted ' + intercepted + ' PDF iframe(s)');
+                }
+            }
+            
+            // Run immediately - don't wait for DOMContentLoaded
+            // This ensures we catch iframes before they start loading
+            if (document.body) {
+                interceptPDFIframes();
+            } else if (document.documentElement) {
+                // Document exists but body not ready yet
+                interceptPDFIframes();
+            }
+            
+            // Also run on DOMContentLoaded as backup
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', interceptPDFIframes, { once: true });
+            }
+            
+            // Intercept dynamically added iframes with MutationObserver
+            if (typeof MutationObserver !== 'undefined') {
+                const observer = new MutationObserver(function(mutations) {
+                    let intercepted = 0;
+                    mutations.forEach(function(mutation) {
+                        mutation.addedNodes.forEach(function(node) {
+                            if (node.nodeType === 1) { // Element node
+                                if (node.tagName === 'IFRAME') {
+                                    if (interceptPDFIframe(node)) {
+                                        intercepted++;
+                                    }
+                                }
+                                // Check nested iframes
+                                if (node.querySelectorAll) {
+                                    const nestedIframes = node.querySelectorAll('iframe');
+                                    nestedIframes.forEach(function(iframe) {
+                                        if (interceptPDFIframe(iframe)) {
+                                            intercepted++;
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    });
+                    if (intercepted > 0) {
+                        console.log('[PDF Interceptor] Intercepted ' + intercepted + ' new PDF iframe(s)');
+                    }
+                });
+                
+                // Start observing as soon as possible
+                const target = document.body || document.documentElement || document;
+                if (target) {
+                    observer.observe(target, {
+                        childList: true,
+                        subtree: true
+                    });
+                }
+            }
+        })();
+        </script>
+        <?php
+    }, 1); // Priority 1 to run early in head
+
     // Enqueue frontend script
     wp_enqueue_script(
         'pdf-lazy-loader',
@@ -206,7 +310,10 @@ function pdf_lazy_loader_settings_page() {
     <div class="wrap pdf-lazy-loader-settings">
         <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
-        <?php settings_errors(); ?>
+        <?php 
+        // Display settings errors only once
+        settings_errors('pdf_lazy_loader_settings');
+        ?>
 
         <form method="post" action="options.php">
             <?php settings_fields('pdf_lazy_loader_settings'); ?>

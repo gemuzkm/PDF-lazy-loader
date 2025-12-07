@@ -839,34 +839,48 @@ select.form-control {
     line-height: var(--line-height-normal);
 }
 
-.pdf-lazy-loader-settings .submit {
-    background: var(--color-primary);
-    color: var(--color-btn-primary-text);
-    border: none;
-    padding: var(--space-10) var(--space-20);
-    border-radius: var(--radius-base);
-    cursor: pointer;
-    font-weight: var(--font-weight-medium);
-    font-size: var(--font-size-base);
-    font-family: var(--font-family-base);
-    transition: all var(--duration-normal) var(--ease-standard);
-    box-shadow: var(--shadow-inset-sm);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.pdf-lazy-loader-settings .submit,
+.pdf-lazy-loader-settings input[type="submit"],
+.pdf-lazy-loader-settings button[type="submit"] {
+    background: var(--color-primary) !important;
+    color: var(--color-btn-primary-text) !important;
+    border: none !important;
+    padding: var(--space-10) var(--space-20) !important;
+    border-radius: var(--radius-base) !important;
+    cursor: pointer !important;
+    font-weight: var(--font-weight-medium) !important;
+    font-size: var(--font-size-base) !important;
+    font-family: var(--font-family-base) !important;
+    transition: all var(--duration-normal) var(--ease-standard) !important;
+    box-shadow: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: auto !important;
+    line-height: 1.5 !important;
+    text-shadow: none !important;
+    text-decoration: none !important;
 }
 
-.pdf-lazy-loader-settings .submit:hover {
-    background: var(--color-primary-hover);
+.pdf-lazy-loader-settings .submit:hover,
+.pdf-lazy-loader-settings input[type="submit"]:hover,
+.pdf-lazy-loader-settings button[type="submit"]:hover {
+    background: var(--color-primary-hover) !important;
+    box-shadow: none !important;
 }
 
-.pdf-lazy-loader-settings .submit:active {
-    background: var(--color-primary-active);
+.pdf-lazy-loader-settings .submit:active,
+.pdf-lazy-loader-settings input[type="submit"]:active,
+.pdf-lazy-loader-settings button[type="submit"]:active {
+    background: var(--color-primary-active) !important;
+    box-shadow: none !important;
 }
 
-.pdf-lazy-loader-settings .submit:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
+.pdf-lazy-loader-settings .submit:focus-visible,
+.pdf-lazy-loader-settings input[type="submit"]:focus-visible,
+.pdf-lazy-loader-settings button[type="submit"]:focus-visible {
+    outline: none !important;
+    box-shadow: var(--focus-ring) !important;
 }
 
 .pdf-lazy-loader-info {
@@ -893,6 +907,24 @@ select.form-control {
     margin: var(--space-12) 0;
     font-size: var(--font-size-base);
     line-height: var(--line-height-normal);
+}
+
+/* Settings notices styling */
+.pdf-lazy-loader-settings .notice,
+.pdf-lazy-loader-settings .updated {
+    margin: var(--space-16) 0 !important;
+    padding: var(--space-12) var(--space-16) !important;
+    border-left-width: 4px !important;
+    position: relative;
+}
+
+.pdf-lazy-loader-settings .notice.is-dismissible,
+.pdf-lazy-loader-settings .updated.is-dismissible {
+    padding-right: var(--space-38) !important;
+}
+
+.pdf-lazy-loader-settings .notice-dismiss {
+    padding: var(--space-8) !important;
 }
 
 /* Mobile portrait breakpoint (480px) */
@@ -925,9 +957,11 @@ select.form-control {
         flex-direction: column;
     }
 
-    .pdf-lazy-loader-settings .submit {
-        width: 100%;
-        padding: var(--space-12) var(--space-16);
+    .pdf-lazy-loader-settings .submit,
+    .pdf-lazy-loader-settings input[type="submit"],
+    .pdf-lazy-loader-settings button[type="submit"] {
+        width: 100% !important;
+        padding: var(--space-12) var(--space-16) !important;
     }
 
     .pdf-lazy-loader-info {
