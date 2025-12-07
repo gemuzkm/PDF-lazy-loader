@@ -1,6 +1,7 @@
 /**
  * PDF Lazy Loader - Frontend Script
  * Handles lazy loading of PDF iframes
+ * Improved to catch all PDF iframes including dynamically created ones
  */
 
 (function() {
@@ -23,7 +24,8 @@
     class PDFLazyLoader {
         constructor() {
             this.options = getOptions();
-            this.version = '1.0.5';
+            this.version = '1.0.6';
+            this.processedIframes = new WeakSet(); // Track processed iframes
             console.log('[PDF] Initializing v' + this.version);
             console.log('[PDF] Options:', this.options);
             this.init();
@@ -31,49 +33,221 @@
 
         init() {
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', () => this.processPDFs());
+                document.addEventListener('DOMContentLoaded', () => {
+                    this.processPDFs();
+                    this.setupMutationObserver();
+                });
             } else {
                 this.processPDFs();
+                this.setupMutationObserver();
             }
+
+            // Also process after a short delay to catch late-loading iframes
+            setTimeout(() => this.processPDFs(), 500);
+            setTimeout(() => this.processPDFs(), 1500);
+        }
+
+        /**
+         * Check if an iframe contains a PDF
+         */
+        isPDFIframe(iframe) {
+            const src = iframe.getAttribute('src') || '';
+            const dataSrc = iframe.getAttribute('data-src') || '';
+            const className = iframe.className || '';
+            const id = iframe.id || '';
+
+            // Check src for PDF indicators
+            const pdfIndicators = [
+                '.pdf',
+                'application/pdf',
+                'pdf-embedder',
+                'pdfembed',
+                'pdfjs',
+                'viewer.html',
+                'pdf-viewer'
+            ];
+
+            const srcToCheck = src || dataSrc;
+            const lowerSrc = srcToCheck.toLowerCase();
+
+            // Check if src contains PDF indicators
+            for (const indicator of pdfIndicators) {
+                if (lowerSrc.includes(indicator)) {
+                    return true;
+                }
+            }
+
+            // Check class names for PDF embedder indicators
+            const pdfClasses = [
+                'pdf-embedder',
+                'pdfembed',
+                'pdf-viewer',
+                'pdf-container'
+            ];
+
+            for (const pdfClass of pdfClasses) {
+                if (className.toLowerCase().includes(pdfClass) || id.toLowerCase().includes(pdfClass)) {
+                    return true;
+                }
+            }
+
+            // Check if iframe is inside a PDF container
+            const parent = iframe.parentElement;
+            if (parent) {
+                const parentClass = parent.className || '';
+                const parentId = parent.id || '';
+                for (const pdfClass of pdfClasses) {
+                    if (parentClass.toLowerCase().includes(pdfClass) || parentId.toLowerCase().includes(pdfClass)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * Extract PDF URL from iframe
+         */
+        extractPDFUrl(iframe) {
+            let pdfUrl = iframe.getAttribute('src') || 
+                        iframe.getAttribute('data-src') || 
+                        '';
+
+            // If URL contains viewer.html or similar, try to extract actual PDF URL
+            if (pdfUrl.includes('viewer.html') || pdfUrl.includes('pdfjs')) {
+                // Try to get PDF URL from URL parameters
+                try {
+                    const url = new URL(pdfUrl, window.location.href);
+                    const fileParam = url.searchParams.get('file') || 
+                                    url.searchParams.get('url') ||
+                                    url.searchParams.get('src');
+                    if (fileParam) {
+                        pdfUrl = decodeURIComponent(fileParam);
+                    }
+                } catch (e) {
+                    console.log('[PDF] Could not parse PDF URL from viewer:', e);
+                }
+            }
+
+            // If still no URL, check data attributes
+            if (!pdfUrl) {
+                pdfUrl = iframe.getAttribute('data-pdf-url') || 
+                        iframe.getAttribute('data-url') ||
+                        '';
+            }
+
+            return pdfUrl;
         }
 
         processPDFs() {
             console.log('[PDF] Finding PDF iframes...');
             
-            // Find all iframes that might contain PDFs
-            const iframes = document.querySelectorAll('iframe[src*=".pdf"], iframe[src*="application/pdf"], iframe[type="application/pdf"]');
-            
-            console.log('[PDF] Found ' + iframes.length + ' iframe(s)');
+            // Find ALL iframes first
+            const allIframes = document.querySelectorAll('iframe');
+            console.log('[PDF] Found ' + allIframes.length + ' total iframe(s)');
 
-            iframes.forEach((iframe, index) => {
-                console.log('[PDF] Processing iframe ' + (index + 1) + '...');
+            let pdfIframes = [];
+
+            // Check each iframe to see if it's a PDF
+            allIframes.forEach((iframe) => {
+                // Skip if already processed
+                if (this.processedIframes.has(iframe)) {
+                    return;
+                }
+
+                // Check if this is a PDF iframe
+                if (this.isPDFIframe(iframe)) {
+                    pdfIframes.push(iframe);
+                }
+            });
+
+            console.log('[PDF] Found ' + pdfIframes.length + ' PDF iframe(s)');
+
+            pdfIframes.forEach((iframe, index) => {
+                console.log('[PDF] Processing PDF iframe ' + (index + 1) + '...');
                 this.processIframe(iframe);
             });
         }
 
+        /**
+         * Setup MutationObserver to catch dynamically added iframes
+         */
+        setupMutationObserver() {
+            const observer = new MutationObserver((mutations) => {
+                let shouldProcess = false;
+
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType === 1) { // Element node
+                            // Check if the added node is an iframe
+                            if (node.tagName === 'IFRAME') {
+                                shouldProcess = true;
+                            }
+                            // Check if the added node contains iframes
+                            if (node.querySelectorAll && node.querySelectorAll('iframe').length > 0) {
+                                shouldProcess = true;
+                            }
+                        }
+                    });
+                });
+
+                if (shouldProcess) {
+                    console.log('[PDF] New iframes detected, processing...');
+                    setTimeout(() => this.processPDFs(), 100);
+                }
+            });
+
+            // Observe the entire document
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+
+            console.log('[PDF] MutationObserver setup complete');
+        }
+
         processIframe(iframe) {
-            const pdfUrl = iframe.getAttribute('src');
+            // Mark as processed
+            this.processedIframes.add(iframe);
+
+            const pdfUrl = this.extractPDFUrl(iframe);
             
             if (!pdfUrl) {
-                console.log('[PDF] No src attribute found, skipping');
+                console.log('[PDF] No PDF URL found, skipping');
                 return;
             }
 
+            console.log('[PDF] PDF URL:', pdfUrl);
             console.log('[PDF] *** IFRAME HIDDEN IMMEDIATELY ***');
+
+            // Remove src immediately to prevent loading
+            const originalSrc = iframe.getAttribute('src');
+            iframe.removeAttribute('src');
+            
             // Hide iframe immediately to prevent background loading
             iframe.style.display = 'none';
             iframe.style.visibility = 'hidden';
             iframe.style.position = 'absolute';
             iframe.style.width = '0';
             iframe.style.height = '0';
+            iframe.style.opacity = '0';
 
             // Get iframe dimensions
-            const width = iframe.getAttribute('width') || iframe.style.width || '100%';
-            const height = iframe.getAttribute('height') || iframe.style.height || '600px';
+            const computedStyle = window.getComputedStyle(iframe);
+            const width = iframe.getAttribute('width') || 
+                        computedStyle.width || 
+                        iframe.style.width || 
+                        '100%';
+            const height = iframe.getAttribute('height') || 
+                         computedStyle.height || 
+                         iframe.style.height || 
+                         '600px';
 
             // Create facade wrapper
             const wrapper = document.createElement('div');
-            wrapper.className = 'pdf-facade-wrapper';
+            wrapper.className = 'pdf-facade-wrapper pdf-lazy-loader-wrapper';
+            wrapper.setAttribute('data-pdf-url', pdfUrl);
             wrapper.style.cssText = `
                 width: ${width};
                 margin: 0 auto 20px;
@@ -82,7 +256,7 @@
 
             // Create facade container
             const facade = document.createElement('div');
-            facade.className = 'pdf-facade-container';
+            facade.className = 'pdf-facade-container pdf-lazy-loader-facade';
             facade.style.cssText = `
                 width: 100%;
                 height: ${height};
@@ -152,7 +326,7 @@
 
             // View PDF button
             const viewButton = document.createElement('button');
-            viewButton.className = 'pdf-view-button';
+            viewButton.className = 'pdf-view-button pdf-lazy-loader-view-btn';
             viewButton.type = 'button';
             viewButton.textContent = '📖 View PDF';
             viewButton.style.cssText = `
@@ -180,7 +354,7 @@
             // Click handler
             viewButton.addEventListener('click', () => {
                 console.log('[PDF] View button clicked');
-                this.loadPDF(iframe, facade, pdfUrl);
+                this.loadPDF(iframe, facade, pdfUrl, originalSrc);
             });
 
             buttonsContainer.appendChild(viewButton);
@@ -189,7 +363,7 @@
             if (this.options.enableDownload) {
                 console.log('[PDF] Download enabled: true');
                 const downloadButton = document.createElement('a');
-                downloadButton.className = 'pdf-download-button';
+                downloadButton.className = 'pdf-download-button pdf-lazy-loader-download-btn';
                 downloadButton.textContent = '⬇️ Download';
                 downloadButton.href = pdfUrl;
                 downloadButton.download = '';
@@ -230,12 +404,14 @@
             wrapper.appendChild(facade);
 
             // Insert facade before iframe
-            iframe.parentNode.insertBefore(wrapper, iframe);
+            if (iframe.parentNode) {
+                iframe.parentNode.insertBefore(wrapper, iframe);
+            }
 
             console.log('[PDF] Facade created');
         }
 
-        loadPDF(iframe, facade, pdfUrl) {
+        loadPDF(iframe, facade, pdfUrl, originalSrc) {
             console.log('[PDF] loadPDF called');
             console.log('[PDF] Starting loading animation: ' + this.options.loadingTime + 'ms');
 
@@ -265,8 +441,20 @@
             setTimeout(() => {
                 console.log('[PDF] IFRAME SHOWN');
                 
+                // Restore iframe src
+                if (originalSrc) {
+                    iframe.setAttribute('src', originalSrc);
+                } else {
+                    iframe.setAttribute('src', pdfUrl);
+                }
+                
                 // Remove facade
-                facade.remove();
+                const wrapper = facade.closest('.pdf-facade-wrapper');
+                if (wrapper) {
+                    wrapper.remove();
+                } else {
+                    facade.remove();
+                }
                 
                 // Show and restore iframe
                 iframe.style.display = '';
@@ -274,12 +462,7 @@
                 iframe.style.position = '';
                 iframe.style.width = '';
                 iframe.style.height = '';
-                
-                // Ensure iframe is visible
-                const wrapper = iframe.parentNode.querySelector('.pdf-facade-wrapper');
-                if (wrapper) {
-                    wrapper.remove();
-                }
+                iframe.style.opacity = '';
             }, this.options.loadingTime);
         }
     }

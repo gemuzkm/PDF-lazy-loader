@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/your-username/pdf-lazy-loader
  * Description: Optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Your Name
  * Author URI: https://example.com
  * License: GPL v2 or later
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PDF_LAZY_LOADER_VERSION', '1.0.5');
+define('PDF_LAZY_LOADER_VERSION', '1.0.6');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
 
