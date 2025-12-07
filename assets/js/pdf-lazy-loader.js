@@ -1,73 +1,78 @@
 /**
- * PDF Lazy Loader - Main JavaScript
- * Main JavaScript code of the plugin
- * 
- * This file contains all the logic for PDF loading
- * Compatible with Redis Object Cache and FlyingPress
+ * PDF Lazy Loader v1.0.4
+ * Main JavaScript handler for lazy loading PDF embeds
  */
 
 (function() {
     'use strict';
 
-    /**
-     * PDF Lazy Loader - main class
-     */
+    class URLExtractor {
+        static extractURL(iframeSrc) {
+            try {
+                if (!iframeSrc) return null;
+                
+                const url = new URL(iframeSrc, window.location.origin);
+                const encoded = url.searchParams.get('__d') || url.searchParams.get('pdfemb-data');
+                
+                if (!encoded) {
+                    console.log('[PDF] No encoded data found');
+                    return null;
+                }
+
+                const urlSafeBase64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
+                
+                try {
+                    const jsonStr = atob(padded);
+                    const data = JSON.parse(jsonStr);
+                    return data.url || null;
+                } catch (e) {
+                    console.log('[PDF] Could not decode URL');
+                    return null;
+                }
+            } catch (e) {
+                console.log('[PDF] Error extracting URL:', e.message);
+                return null;
+            }
+        }
+    }
+
     class PDFLazyLoader {
         constructor(options = {}) {
+            if (!options || typeof options !== 'object') {
+                options = {};
+            }
+
             this.options = {
                 buttonColor: options.buttonColor || '#FF6B6B',
                 buttonColorHover: options.buttonColorHover || '#E63946',
-                loadingTime: options.loadingTime || 1500,
-                debugMode: options.debugMode || false,
-                enableDownload: options.enableDownload !== undefined ? options.enableDownload : true,
-                ...options
+                loadingTime: Math.max(500, Math.min(5000, options.loadingTime || 1500)),
+                enableDownload: options.enableDownload === true || options.enableDownload === 'true',
             };
 
+            console.log('[PDF] Initializing v1.0.4');
+            console.log('[PDF] Download enabled:', this.options.enableDownload);
+
             this.pdfContainers = [];
-            this.loadedPDFs = new Map();
             this.processedElements = new Set();
             this.init();
         }
 
-        /**
-         * Initialization
-         */
         init() {
-            this.log('PDF Lazy Loader initialized');
-
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.setupPDFs());
             } else {
                 this.setupPDFs();
             }
-
             this.observeMutations();
-            this.dispatchReady();
         }
 
-        /**
-         * Dispatch ready event
-         */
-        dispatchReady() {
-            const event = new CustomEvent('pdfLazyLoaderReady', {
-                detail: { loader: this }
-            });
-            document.dispatchEvent(event);
-        }
-
-        /**
-         * Observe DOM changes for AJAX content
-         */
         observeMutations() {
             const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'childList') {
                         mutation.addedNodes.forEach((node) => {
                             if (node.nodeType === 1) {
-                                const pdfs = node.querySelectorAll('[data-pdfemb-lazy]');
-                                pdfs.forEach((pdf) => this.processPDF(pdf));
-
-                                // Check for PDF Embedder containers
                                 const containers = node.querySelectorAll('iframe.pdfembed-iframe');
                                 containers.forEach((container) => this.processIframe(container));
                             }
@@ -82,61 +87,47 @@
             });
         }
 
-        /**
-         * Main function: process all PDF containers
-         */
         setupPDFs() {
-            // Method 1: Find by iframe class (PDF Embedder)
+            console.log('[PDF] Finding PDF iframes...');
+            
             const iframes = document.querySelectorAll('iframe.pdfembed-iframe');
+            console.log('[PDF] Found ' + iframes.length + ' iframe(s)');
+
             iframes.forEach((iframe) => {
                 if (!this.processedElements.has(iframe)) {
                     this.processIframe(iframe);
                     this.processedElements.add(iframe);
                 }
             });
-
-            // Method 2: Find by data-attributes
-            const dataPDFs = document.querySelectorAll('[data-pdfemb-lazy="true"]');
-            dataPDFs.forEach((pdf) => {
-                if (!this.processedElements.has(pdf)) {
-                    this.processPDF(pdf);
-                    this.processedElements.add(pdf);
-                }
-            });
-
-            this.log(`Found ${this.pdfContainers.length} PDF(s)`);
         }
 
-        /**
-         * Process individual PDF
-         */
-        processPDF(element) {
-            if (element.tagName === 'IFRAME') {
-                this.processIframe(element);
-            }
-        }
-
-        /**
-         * Process iframe and wrap it in Facade
-         */
         processIframe(iframe) {
-            // Check if already processed
+            console.log('[PDF] Processing iframe...');
+
+            // CRITICAL: Check if already processed
             if (iframe.closest('.pdf-facade-wrapper')) {
+                console.log('[PDF] Already processed, skipping');
                 return;
             }
 
-            const pdfUrl = this.extractPDFUrl(iframe.src);
+            // CRITICAL FIX: Hide iframe IMMEDIATELY
+            iframe.style.display = 'none';
+            iframe.style.visibility = 'hidden';
+            console.log('[PDF] *** IFRAME HIDDEN IMMEDIATELY ***');
+
+            const pdfUrl = URLExtractor.extractURL(iframe.src);
             if (!pdfUrl) {
-                this.log('Could not extract PDF URL from: ' + iframe.src);
+                console.log('[PDF] Could not extract PDF URL');
+                iframe.style.display = 'block';
+                iframe.style.visibility = 'visible';
                 return;
             }
 
             const wrapper = this.createFacade(iframe, pdfUrl);
             iframe.parentNode.insertBefore(wrapper, iframe);
-            iframe.style.display = 'none';
-            iframe.classList.add('pdf-lazy-loading-iframe');
 
             wrapper.dataset.iframeId = this.generateUID();
+            
             this.pdfContainers.push({
                 id: wrapper.dataset.iframeId,
                 wrapper: wrapper,
@@ -145,22 +136,20 @@
                 isLoaded: false,
             });
 
-            this.log('Processed PDF from: ' + pdfUrl);
+            console.log('[PDF] Facade created');
         }
 
-        /**
-         * Create Facade element
-         */
         createFacade(iframe, pdfUrl) {
             const wrapper = document.createElement('div');
             wrapper.className = 'pdf-facade-wrapper';
 
             const width = iframe.style.width || '100%';
             const height = iframe.style.height || '600px';
-            const maxWidth = iframe.style.maxWidth || '100%';
 
-            const downloadBtn = this.options.enableDownload 
-                ? `<button class="pdf-download-button" type="button" style="
+            let downloadBtn = '';
+            if (this.options.enableDownload) {
+                console.log('[PDF] Creating download button');
+                downloadBtn = `<button class="pdf-download-button" type="button" style="
                     padding: 12px 24px;
                     background: white;
                     color: #333;
@@ -172,13 +161,13 @@
                     transition: all 0.3s ease;
                 ">
                     ⬇ Download
-                </button>`
-                : '';
+                </button>`;
+            }
 
             wrapper.innerHTML = `
                 <div class="pdf-facade-container" style="
                     width: 100%;
-                    max-width: ${maxWidth};
+                    max-width: 100%;
                     height: ${height};
                     border: 1px solid #ddd;
                     border-radius: 4px;
@@ -191,16 +180,6 @@
                     overflow: hidden;
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 ">
-                    <div class="pdf-facade-background" style="
-                        position: absolute;
-                        top: 0;
-                        left: 0;
-                        right: 0;
-                        bottom: 0;
-                        background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
-                        z-index: 0;
-                    "></div>
-
                     <div class="pdf-facade-content" style="
                         position: relative;
                         z-index: 1;
@@ -225,7 +204,7 @@
                             margin: 0 0 20px 0;
                             color: #666;
                             font-size: 14px;
-                        ">Click the button below to load the document</p>
+                        ">Click the button below to load</p>
 
                         <div class="pdf-loading-indicator" style="
                             display: none;
@@ -268,12 +247,6 @@
                             </button>
                             ${downloadBtn}
                         </div>
-
-                        <p class="pdf-facade-info" style="
-                            margin: 20px 0 0 0;
-                            color: #999;
-                            font-size: 12px;
-                        ">Document will be loaded on first access</p>
                     </div>
                 </div>
             `;
@@ -283,9 +256,20 @@
             const viewBtn = wrapper.querySelector('.pdf-view-button');
             const dlBtn = wrapper.querySelector('.pdf-download-button');
 
-            viewBtn.addEventListener('click', () => this.loadPDF(wrapper.dataset.iframeId, 'view'));
+            viewBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[PDF] View button clicked');
+                this.loadPDF(wrapper.dataset.iframeId);
+            });
+
             if (dlBtn) {
-                dlBtn.addEventListener('click', () => this.downloadPDF(pdfUrl));
+                dlBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('[PDF] Download button clicked');
+                    this.downloadPDF(pdfUrl);
+                });
             }
 
             viewBtn.addEventListener('mouseenter', (e) => {
@@ -297,28 +281,20 @@
                 e.target.style.transform = 'translateY(0)';
             });
 
-            if (dlBtn) {
-                dlBtn.addEventListener('mouseenter', (e) => {
-                    e.target.style.borderColor = this.options.buttonColor;
-                    e.target.style.color = this.options.buttonColor;
-                });
-                dlBtn.addEventListener('mouseleave', (e) => {
-                    e.target.style.borderColor = '#ddd';
-                    e.target.style.color = '#333';
-                });
-            }
-
             return wrapper;
         }
 
-        /**
-         * Load PDF on button click (NOT on page load)
-         */
-        loadPDF(wrapperId, mode = 'view') {
+        loadPDF(wrapperId) {
+            console.log('[PDF] loadPDF called');
+
             const pdfEntry = this.pdfContainers.find((p) => p.id === wrapperId);
-            if (!pdfEntry) return;
+            if (!pdfEntry) {
+                console.log('[PDF] Entry not found');
+                return;
+            }
 
             if (pdfEntry.isLoaded) {
+                console.log('[PDF] Already loaded');
                 this.showPDF(pdfEntry);
                 return;
             }
@@ -330,98 +306,43 @@
             buttons.style.display = 'none';
             loadingIndicator.style.display = 'block';
 
-            // Load after delay
+            console.log('[PDF] Starting loading animation: ' + this.options.loadingTime + 'ms');
+
             setTimeout(() => {
+                console.log('[PDF] Loading complete');
                 pdfEntry.isLoaded = true;
                 this.showPDF(pdfEntry);
             }, this.options.loadingTime);
         }
 
-        /**
-         * Show loaded PDF
-         */
         showPDF(pdfEntry) {
+            console.log('[PDF] Showing PDF');
+
             const wrapper = pdfEntry.wrapper;
             const iframe = pdfEntry.iframe;
 
             wrapper.style.display = 'none';
             iframe.style.display = 'block';
+            iframe.style.visibility = 'visible';
 
-            if (window.PDFEmbedderAutoResize) {
-                window.PDFEmbedderAutoResize(iframe);
-            } else {
-                iframe.style.width = '100%';
-                iframe.style.height = iframe.dataset.height || '600px';
-            }
-
-            window.dispatchEvent(
-                new CustomEvent('pdfembedder:loaded', {
-                    detail: { iframe: iframe, pdfEntry: pdfEntry },
-                })
-            );
+            console.log('[PDF] *** IFRAME SHOWN ***');
 
             setTimeout(() => {
                 iframe.dispatchEvent(new Event('resize'));
             }, 100);
-
-            this.log('PDF loaded and displayed');
         }
 
-        /**
-         * Download PDF file
-         */
         downloadPDF(pdfUrl) {
+            console.log('[PDF] Download initiated');
+
             if (!pdfUrl) return;
-            const realUrl = this.decodeBase64PDF(pdfUrl);
+
             const link = document.createElement('a');
-            link.href = realUrl;
+            link.href = pdfUrl;
             link.download = 'document.pdf';
             link.click();
         }
 
-        /**
-         * Extract PDF URL from iframe src
-         */
-        extractPDFUrl(iframeSrc) {
-            if (!iframeSrc) return null;
-            try {
-                const url = new URL(iframeSrc, window.location.origin);
-                const pdfembData = url.searchParams.get('pdfemb-data');
-                if (!pdfembData) return null;
-                try {
-                    const urlSafeBase64 = pdfembData.replace(/-/g, '+').replace(/_/g, '/');
-                    const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
-                    const jsonStr = atob(padded);
-                    const data = JSON.parse(jsonStr);
-                    return data.url || null;
-                } catch (e) {
-                    this.log('Error decoding PDF data: ' + e.message);
-                    return null;
-                }
-            } catch (e) {
-                this.log('Error parsing URL: ' + e.message);
-                return null;
-            }
-        }
-
-        /**
-         * Decode base64 PDF URL
-         */
-        decodeBase64PDF(encoded) {
-            try {
-                const urlSafeBase64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-                const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
-                const jsonStr = atob(padded);
-                const data = JSON.parse(jsonStr);
-                return data.url || encoded;
-            } catch (e) {
-                return encoded;
-            }
-        }
-
-        /**
-         * Add CSS for loading spinner
-         */
         addSpinnerAnimation() {
             if (document.getElementById('pdf-lazy-loader-styles')) return;
 
@@ -438,19 +359,6 @@
                     margin-bottom: 0;
                 }
 
-                .pdf-facade-container {
-                    transition: all 0.3s ease;
-                }
-
-                .pdf-facade-buttons button {
-                    font-family: inherit;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }
-
-                .pdf-facade-buttons button:active {
-                    transform: scale(0.98);
-                }
-
                 @media (prefers-color-scheme: dark) {
                     .pdf-facade-container {
                         background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
@@ -459,27 +367,12 @@
                     .pdf-facade-title {
                         color: #fff !important;
                     }
-                    .pdf-facade-subtitle, .pdf-loading-text, .pdf-facade-info {
+                    .pdf-facade-subtitle, .pdf-loading-text {
                         color: #bbb !important;
-                    }
-                    .pdf-download-button {
-                        background: #333 !important;
-                        color: #fff !important;
-                        border-color: #555 !important;
                     }
                 }
 
                 @media (max-width: 600px) {
-                    .pdf-facade-content {
-                        padding: 20px 15px !important;
-                    }
-                    .pdf-facade-icon svg {
-                        width: 48px !important;
-                        height: 60px !important;
-                    }
-                    .pdf-facade-title {
-                        font-size: 16px !important;
-                    }
                     .pdf-facade-buttons {
                         flex-direction: column !important;
                     }
@@ -492,32 +385,30 @@
             document.head.appendChild(style);
         }
 
-        /**
-         * Generate unique ID
-         */
         generateUID() {
             return 'pdf-' + Math.random().toString(36).substr(2, 9);
         }
+    }
 
-        /**
-         * Logging
-         */
-        log(message) {
-            if (this.options.debugMode) {
-                console.log('[PDFLazyLoader] ' + message);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const data = typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {};
+                console.log('[PDF] Initializing with data:', data);
+                new PDFLazyLoader(data);
+            } catch (e) {
+                console.error('[PDF] Error:', e);
             }
+        });
+    } else {
+        try {
+            const data = typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {};
+            console.log('[PDF] Initializing with data:', data);
+            new PDFLazyLoader(data);
+        } catch (e) {
+            console.error('[PDF] Error:', e);
         }
     }
 
-    // Initialize
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            new PDFLazyLoader(typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {});
-        });
-    } else {
-        new PDFLazyLoader(typeof pdfLazyLoaderData !== 'undefined' ? pdfLazyLoaderData : {});
-    }
-
-    // Export for usage
     window.PDFLazyLoader = PDFLazyLoader;
 })();

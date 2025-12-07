@@ -739,362 +739,222 @@ select.form-control {
 
 /* END PERPLEXITY DESIGN SYSTEM */
 /**
- * PDF Lazy Loader - Admin Styles
- * Стили для админ-панели
+ * Admin CSS for PDF Lazy Loader v1.0.4
+ * Modified to match Perplexity Design System
  */
 
 .pdf-lazy-loader-settings {
+    background: var(--color-surface);
+    padding: var(--space-24);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-card-border);
+    box-shadow: var(--shadow-sm);
     font-family: var(--font-family-base);
-    max-width: 800px;
-    margin: var(--space-20) 0;
 }
 
 .pdf-lazy-loader-settings h1 {
     color: var(--color-text);
-    margin-bottom: var(--space-32);
-    padding-bottom: var(--space-16);
-    border-bottom: 2px solid var(--color-primary);
+    margin-bottom: var(--space-24);
     font-size: var(--font-size-4xl);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-tight);
 }
 
-.pdf-lazy-loader-info {
-    margin-bottom: var(--space-32);
-    background: var(--color-secondary);
-    padding: var(--space-20);
-    border-radius: var(--radius-base);
-    border: 1px solid var(--color-border);
+.pdf-lazy-loader-settings .form-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: var(--space-24);
 }
 
-.info-box {
-    background: var(--color-surface);
-    padding: var(--space-20);
-    border-radius: var(--radius-sm);
-    border-left: 4px solid var(--color-primary);
-    box-shadow: var(--shadow-sm);
+.pdf-lazy-loader-settings .form-table tr {
+    border-bottom: 1px solid var(--color-card-border-inner);
 }
 
-.info-box h2 {
-    margin-top: 0;
-    margin-bottom: var(--space-16);
-    color: var(--color-text);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-}
-
-.info-box p {
-    margin: var(--space-8) 0;
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-base);
-}
-
-.status-active {
-    color: var(--color-success);
-    font-weight: var(--font-weight-semibold);
-}
-
-.status-inactive {
-    color: var(--color-error);
-    font-weight: var(--font-weight-semibold);
-}
-
-.form-table {
-    margin-top: var(--space-20);
-    background: var(--color-surface);
-    border: 1px solid var(--color-card-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-
-.form-table th {
-    background: var(--color-secondary);
-    padding: var(--space-16);
+.pdf-lazy-loader-settings .form-table th {
     text-align: left;
-    font-weight: var(--font-weight-semibold);
-    border-bottom: 1px solid var(--color-card-border-inner);
-    color: var(--color-text);
-    font-size: var(--font-size-base);
-}
-
-.form-table td {
     padding: var(--space-16);
-    border-bottom: 1px solid var(--color-card-border-inner);
+    background: var(--color-secondary);
+    font-weight: var(--font-weight-semibold);
+    width: 200px;
+    color: var(--color-text);
+    font-size: var(--font-size-md);
 }
 
-.form-table tr:last-child td {
-    border-bottom: none;
+.pdf-lazy-loader-settings .form-table td {
+    padding: var(--space-16);
 }
 
-.form-table input[type="text"],
-.form-table input[type="number"],
-.form-table input[type="color"],
-.form-table textarea {
-    max-width: 300px;
+.pdf-lazy-loader-settings input[type="color"] {
+    width: 60px;
+    height: 40px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    background-color: var(--color-surface);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.pdf-lazy-loader-settings input[type="color"]:focus {
+    border-color: var(--color-primary);
+    outline: var(--focus-outline);
+}
+
+.pdf-lazy-loader-settings input[type="number"] {
+    width: 100px;
     padding: var(--space-8) var(--space-12);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-base);
     font-size: var(--font-size-md);
+    line-height: 1.5;
+    color: var(--color-text);
+    background-color: var(--color-surface);
     font-family: var(--font-family-base);
     transition: border-color var(--duration-fast) var(--ease-standard),
-                box-shadow var(--duration-fast) var(--ease-standard);
-    background-color: var(--color-surface);
-    color: var(--color-text);
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
-.form-table input[type="text"]:focus,
-.form-table input[type="number"]:focus,
-.form-table input[type="color"]:focus,
-.form-table textarea:focus {
-    outline: var(--focus-outline);
+.pdf-lazy-loader-settings input[type="number"]:focus {
     border-color: var(--color-primary);
-    box-shadow: var(--focus-ring);
+    outline: var(--focus-outline);
 }
 
-.form-table input[type="checkbox"] {
+.pdf-lazy-loader-settings input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
     cursor: pointer;
-    width: 18px;
-    height: 18px;
     accent-color: var(--color-primary);
 }
 
-.form-table .description {
-    display: block;
-    margin-top: var(--space-8);
+.pdf-lazy-loader-settings input[type="checkbox"]:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: 2px;
+}
+
+.pdf-lazy-loader-settings .description {
     color: var(--color-text-secondary);
     font-size: var(--font-size-sm);
-    font-style: italic;
+    margin-top: var(--space-6);
+    display: block;
+    line-height: var(--line-height-normal);
 }
 
-textarea.form-table {
-    font-family: var(--font-family-mono);
-    resize: vertical;
-}
-
-.submit {
-    margin-top: var(--space-32);
-    padding: var(--space-16) 0;
-}
-
-.submit input[type="submit"] {
+.pdf-lazy-loader-settings .submit {
     background: var(--color-primary);
     color: var(--color-btn-primary-text);
-    padding: var(--space-12) var(--space-32);
     border: none;
+    padding: var(--space-10) var(--space-20);
     border-radius: var(--radius-base);
-    font-size: var(--font-size-base);
-    font-weight: var(--font-weight-medium);
     cursor: pointer;
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-base);
+    font-family: var(--font-family-base);
     transition: all var(--duration-normal) var(--ease-standard);
     box-shadow: var(--shadow-inset-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.submit input[type="submit"]:hover {
+.pdf-lazy-loader-settings .submit:hover {
     background: var(--color-primary-hover);
-    box-shadow: var(--shadow-md);
 }
 
-.submit input[type="submit"]:active {
+.pdf-lazy-loader-settings .submit:active {
     background: var(--color-primary-active);
-    transform: scale(0.98);
 }
 
-.submit input[type="submit"]:focus-visible {
-    outline: var(--focus-outline);
+.pdf-lazy-loader-settings .submit:focus-visible {
+    outline: none;
     box-shadow: var(--focus-ring);
 }
 
-.pdf-lazy-loader-docs {
+.pdf-lazy-loader-info {
+    background: var(--color-surface);
+    padding: var(--space-24);
+    border-radius: var(--radius-lg);
     margin-top: var(--space-32);
-    padding: var(--space-20);
-    background: var(--color-bg-8);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    color: var(--color-text);
-}
-
-.pdf-lazy-loader-docs h2 {
-    margin-top: 0;
-    color: var(--color-text);
-    font-size: var(--font-size-xl);
-    font-weight: var(--font-weight-semibold);
-}
-
-.pdf-lazy-loader-docs a {
-    color: var(--color-primary);
-    text-decoration: none;
-    font-weight: var(--font-weight-semibold);
-    transition: color var(--duration-fast) var(--ease-standard);
-}
-
-.pdf-lazy-loader-docs a:hover {
-    color: var(--color-primary-hover);
-    text-decoration: underline;
-}
-
-#pdf-lazy-loader-stats {
-    margin-top: var(--space-20);
-    padding: var(--space-16);
-    background: var(--color-surface);
     border: 1px solid var(--color-card-border);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-sm);
 }
 
-#pdf-lazy-loader-stats h3 {
-    margin-top: 0;
+.pdf-lazy-loader-info h2 {
     color: var(--color-text);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-}
-
-#pdf-lazy-loader-stats ul {
-    margin: 0;
-    padding: 0 0 0 var(--space-20);
-    list-style: none;
-}
-
-#pdf-lazy-loader-stats li {
-    padding: var(--space-8) 0;
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-}
-
-#pdf-lazy-loader-compatibility-status {
-    margin-top: var(--space-20);
-    padding: var(--space-16);
-    background: var(--color-surface);
-    border: 1px solid var(--color-card-border);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-xs);
-}
-
-#pdf-lazy-loader-compatibility-status h3 {
     margin-top: 0;
-    color: var(--color-text);
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-2xl);
     font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-tight);
+    margin-bottom: var(--space-16);
 }
 
-#pdf-lazy-loader-compatibility-status ul {
-    margin: 0;
-    padding: 0 0 0 var(--space-20);
-    list-style: none;
-}
-
-#pdf-lazy-loader-compatibility-status li {
-    padding: var(--space-8) 0;
+.pdf-lazy-loader-info p {
     color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
+    margin: var(--space-12) 0;
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
 }
 
-/* Responsive - Mobile Portrait */
+/* Mobile portrait breakpoint (480px) */
 @media (max-width: 480px) {
     .pdf-lazy-loader-settings {
-        margin: var(--space-10);
+        padding: var(--space-16);
     }
 
     .pdf-lazy-loader-settings h1 {
-        font-size: var(--font-size-2xl);
-        margin-bottom: var(--space-20);
-        padding-bottom: var(--space-12);
+        font-size: var(--font-size-3xl);
+        margin-bottom: var(--space-16);
+    }
+
+    .pdf-lazy-loader-settings .form-table th {
+        width: 100%;
+        display: block;
+        margin-bottom: var(--space-6);
+        padding: var(--space-12);
+        font-size: var(--font-size-sm);
+    }
+
+    .pdf-lazy-loader-settings .form-table td {
+        display: block;
+        width: 100%;
+        padding: var(--space-12);
+    }
+
+    .pdf-lazy-loader-settings .form-table tr {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .pdf-lazy-loader-settings .submit {
+        width: 100%;
+        padding: var(--space-12) var(--space-16);
     }
 
     .pdf-lazy-loader-info {
         padding: var(--space-16);
-        margin-bottom: var(--space-20);
+        margin-top: var(--space-24);
     }
 
-    .info-box {
-        padding: var(--space-16);
-    }
-
-    .info-box h2 {
-        font-size: var(--font-size-md);
-        margin-bottom: var(--space-12);
-    }
-
-    .info-box p {
-        font-size: var(--font-size-sm);
-    }
-
-    .form-table input[type="text"],
-    .form-table input[type="number"],
-    .form-table input[type="color"],
-    .form-table textarea {
-        max-width: 100%;
-        width: 100%;
-    }
-
-    .form-table th,
-    .form-table td {
-        display: block;
-        padding: var(--space-12);
-        text-align: left;
-        border-bottom: 1px solid var(--color-card-border-inner);
-    }
-
-    .form-table th {
-        background: var(--color-primary);
-        color: var(--color-btn-primary-text);
-        font-weight: var(--font-weight-semibold);
-        margin-top: var(--space-20);
-        border-bottom: none;
-    }
-
-    .form-table tr {
-        display: block;
-        border: 1px solid var(--color-card-border);
-        border-radius: var(--radius-sm);
-        margin-bottom: var(--space-16);
-        overflow: hidden;
-    }
-
-    .form-table tr:last-child {
-        margin-bottom: 0;
-    }
-
-    .submit {
-        margin-top: var(--space-20);
-        padding: var(--space-12) 0;
-    }
-
-    .submit input[type="submit"] {
-        width: 100%;
-        padding: var(--space-12) var(--space-20);
-    }
-
-    .pdf-lazy-loader-docs {
-        margin-top: var(--space-20);
-        padding: var(--space-16);
-    }
-
-    .pdf-lazy-loader-docs h2 {
-        font-size: var(--font-size-lg);
-    }
-
-    #pdf-lazy-loader-stats,
-    #pdf-lazy-loader-compatibility-status {
-        margin-top: var(--space-16);
-        padding: var(--space-12);
-    }
-
-    #pdf-lazy-loader-stats h3,
-    #pdf-lazy-loader-compatibility-status h3 {
-        font-size: var(--font-size-md);
+    .pdf-lazy-loader-info h2 {
+        font-size: var(--font-size-xl);
     }
 }
 
-/* Additional responsive breakpoint for tablets */
-@media (max-width: 768px) and (min-width: 481px) {
-    .pdf-lazy-loader-settings {
-        margin: var(--space-16);
+/* Tablet breakpoint (768px) */
+@media (max-width: 768px) {
+    .pdf-lazy-loader-settings .form-table th {
+        width: 100%;
+        display: block;
+        margin-bottom: var(--space-6);
     }
 
-    .form-table input[type="text"],
-    .form-table input[type="number"],
-    .form-table input[type="color"],
-    .form-table textarea {
-        max-width: 100%;
+    .pdf-lazy-loader-settings .form-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .pdf-lazy-loader-settings .form-table tr {
+        display: flex;
+        flex-direction: column;
     }
 }
