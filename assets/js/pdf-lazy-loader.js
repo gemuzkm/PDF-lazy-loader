@@ -621,21 +621,25 @@
             console.log('[PDF] Original src:', originalSrc);
             console.log('[PDF] PDF URL:', pdfUrl);
 
-            // Show loading state
+            // Show loading state with spinner
+            const loadingSpinner = document.createElement('div');
+            loadingSpinner.className = 'pdf-loading-spinner';
+            loadingSpinner.style.color = this.options.buttonColor;
+            
+            // Create spinner element
+            const spinner = document.createElement('div');
+            spinner.className = 'pdf-spinner';
+            
+            // Create loading text (optional, can be removed if not needed)
             const loadingText = document.createElement('div');
             loadingText.className = 'pdf-loading-text';
             loadingText.textContent = 'Loading PDF...';
-            loadingText.style.cssText = `
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                color: ${this.options.buttonColor};
-                font-size: 18px;
-                font-weight: 600;
-                z-index: 10;
-            `;
-            facade.appendChild(loadingText);
+            
+            // Assemble spinner
+            loadingSpinner.appendChild(spinner);
+            loadingSpinner.appendChild(loadingText);
+            
+            facade.appendChild(loadingSpinner);
 
             // Hide buttons
             const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
@@ -646,6 +650,18 @@
             // After loading time, show iframe
             setTimeout(() => {
                 console.log('[PDF] IFRAME SHOWN');
+                
+                // Remove loading spinner
+                const spinnerElement = facade.querySelector('.pdf-loading-spinner');
+                if (spinnerElement) {
+                    spinnerElement.remove();
+                }
+                
+                // Restore buttons opacity
+                const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
+                if (buttonsContainer) {
+                    buttonsContainer.style.opacity = '1';
+                }
                 
                 // Get wrapper if not provided
                 if (!wrapper) {

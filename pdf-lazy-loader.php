@@ -293,6 +293,14 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
     // Get current settings
     $settings = pdf_lazy_loader_get_settings();
 
+    // Enqueue frontend CSS
+    wp_enqueue_style(
+        'pdf-lazy-loader',
+        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css',
+        array(),
+        PDF_LAZY_LOADER_VERSION
+    );
+
     // Enqueue frontend script
     wp_enqueue_script(
         'pdf-lazy-loader',
