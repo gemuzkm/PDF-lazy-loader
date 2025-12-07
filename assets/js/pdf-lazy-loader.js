@@ -1,97 +1,13 @@
 /**
- * PDF Lazy Loader - Main JavaScript with URL Obfuscation
+ * PDF Lazy Loader - Main JavaScript
  * Main JavaScript code of the plugin
  * 
- * This file contains all the logic for PDF loading with obfuscated PDF URLs
+ * This file contains all the logic for PDF loading
  * Compatible with Redis Object Cache and FlyingPress
  */
 
 (function() {
     'use strict';
-
-    /**
-     * URL Obfuscation Utility
-     * Hides PDF URLs from simple source code inspection
-     */
-    class URLObfuscator {
-        /**
-         * Obfuscate URL by encoding parts
-         *
-         * @param {string} url
-         * @returns {string}
-         */
-        static obfuscate(url) {
-            try {
-                // Split URL into parts to avoid full URL exposure
-                const parts = url.split('?');
-                if (parts.length !== 2) return url;
-
-                const base = parts[0];
-                const query = parts[1];
-
-                // Encode query parameters
-                const encoded = btoa(encodeURIComponent(query));
-                
-                // Store in data attribute instead of direct concatenation
-                return base + '?__d=' + encoded;
-            } catch (e) {
-                return url;
-            }
-        }
-
-        /**
-         * Deobfuscate URL
-         *
-         * @param {string} url
-         * @returns {string}
-         */
-        static deobfuscate(url) {
-            try {
-                if (url.indexOf('?__d=') === -1) {
-                    return url;
-                }
-
-                const parts = url.split('?__d=');
-                const base = parts[0];
-                const encoded = parts[1];
-
-                // Decode query parameters
-                const query = decodeURIComponent(atob(encoded));
-                
-                return base + '?' + query;
-            } catch (e) {
-                return url;
-            }
-        }
-
-        /**
-         * Extract PDF data from iframe safely
-         *
-         * @param {string} iframeSrc
-         * @returns {string|null}
-         */
-        static extractPDFUrl(iframeSrc) {
-            try {
-                // First, deobfuscate if needed
-                const deobfuscated = this.deobfuscate(iframeSrc);
-                const url = new URL(deobfuscated, window.location.origin);
-                
-                // Get encoded data
-                const encoded = url.searchParams.get('__d') || url.searchParams.get('pdfemb-data');
-                if (!encoded) return null;
-
-                // Decode
-                const urlSafeBase64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-                const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
-                const jsonStr = atob(padded);
-                const data = JSON.parse(jsonStr);
-                
-                return data.url || null;
-            } catch (e) {
-                return null;
-            }
-        }
-    }
 
     /**
      * PDF Lazy Loader - main class
@@ -110,7 +26,6 @@
             this.pdfContainers = [];
             this.loadedPDFs = new Map();
             this.processedElements = new Set();
-            this.urlObfuscator = URLObfuscator;
             this.init();
         }
 
@@ -210,10 +125,9 @@
                 return;
             }
 
-            // Extract PDF URL safely with obfuscation handling
-            const pdfUrl = this.urlObfuscator.extractPDFUrl(iframe.src);
+            const pdfUrl = this.extractPDFUrl(iframe.src);
             if (!pdfUrl) {
-                this.log('Could not extract PDF URL from: [OBFUSCATED URL]');
+                this.log('Could not extract PDF URL from: ' + iframe.src);
                 return;
             }
 
@@ -231,7 +145,7 @@
                 isLoaded: false,
             });
 
-            this.log('Processed PDF from obfuscated source');
+            this.log('Processed PDF from: ' + pdfUrl);
         }
 
         /**
@@ -458,10 +372,51 @@
          */
         downloadPDF(pdfUrl) {
             if (!pdfUrl) return;
+            const realUrl = this.decodeBase64PDF(pdfUrl);
             const link = document.createElement('a');
-            link.href = pdfUrl;
+            link.href = realUrl;
             link.download = 'document.pdf';
             link.click();
+        }
+
+        /**
+         * Extract PDF URL from iframe src
+         */
+        extractPDFUrl(iframeSrc) {
+            if (!iframeSrc) return null;
+            try {
+                const url = new URL(iframeSrc, window.location.origin);
+                const pdfembData = url.searchParams.get('pdfemb-data');
+                if (!pdfembData) return null;
+                try {
+                    const urlSafeBase64 = pdfembData.replace(/-/g, '+').replace(/_/g, '/');
+                    const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
+                    const jsonStr = atob(padded);
+                    const data = JSON.parse(jsonStr);
+                    return data.url || null;
+                } catch (e) {
+                    this.log('Error decoding PDF data: ' + e.message);
+                    return null;
+                }
+            } catch (e) {
+                this.log('Error parsing URL: ' + e.message);
+                return null;
+            }
+        }
+
+        /**
+         * Decode base64 PDF URL
+         */
+        decodeBase64PDF(encoded) {
+            try {
+                const urlSafeBase64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = urlSafeBase64 + '=='.slice(0, (4 - urlSafeBase64.length % 4) % 4);
+                const jsonStr = atob(padded);
+                const data = JSON.parse(jsonStr);
+                return data.url || encoded;
+            } catch (e) {
+                return encoded;
+            }
         }
 
         /**
