@@ -279,9 +279,13 @@
                 // Check parent container width
                 const parent = iframe.parentElement;
                 if (parent) {
-                    const parentWidth = parent.offsetWidth || window.getComputedStyle(parent).width;
-                    if (parentWidth && parentWidth !== 'auto' && parentWidth !== '0px') {
-                        width = parentWidth;
+                    const parentOffsetWidth = parent.offsetWidth;
+                    const parentComputedWidth = window.getComputedStyle(parent).width;
+                    // Use offsetWidth if available and valid, otherwise use computed width
+                    if (parentOffsetWidth && parentOffsetWidth > 0) {
+                        width = parentOffsetWidth + 'px';
+                    } else if (parentComputedWidth && parentComputedWidth !== 'auto' && parentComputedWidth !== '0px') {
+                        width = parentComputedWidth; // Already has 'px' unit
                     } else {
                         width = '100%';
                     }
@@ -300,9 +304,36 @@
                 height = '600px'; // Default height
             }
 
-            // Ensure we have valid dimensions
-            if (!width || width === '0px' || width === 'auto' || width === '1px') width = '100%';
-            if (!height || height === '0px' || height === 'auto' || height === '1px') height = '600px';
+            // Ensure we have valid dimensions with proper units
+            // Normalize width: ensure it has a unit or is a percentage
+            if (!width || width === '0px' || width === 'auto' || width === '1px') {
+                width = '100%';
+            } else if (typeof width === 'number') {
+                width = width + 'px';
+            } else if (!width.includes('%') && !width.includes('px') && !width.includes('em') && !width.includes('rem')) {
+                // If width is a number without unit, add 'px'
+                const numWidth = parseFloat(width);
+                if (!isNaN(numWidth)) {
+                    width = numWidth + 'px';
+                } else {
+                    width = '100%';
+                }
+            }
+            
+            // Normalize height: ensure it has a unit
+            if (!height || height === '0px' || height === 'auto' || height === '1px') {
+                height = '600px';
+            } else if (typeof height === 'number') {
+                height = height + 'px';
+            } else if (!height.includes('%') && !height.includes('px') && !height.includes('em') && !height.includes('rem')) {
+                // If height is a number without unit, add 'px'
+                const numHeight = parseFloat(height);
+                if (!isNaN(numHeight)) {
+                    height = numHeight + 'px';
+                } else {
+                    height = '600px';
+                }
+            }
 
             console.log('[PDF] Final iframe dimensions - width:', width, 'height:', height);
             
@@ -353,6 +384,8 @@
             wrapper.className = 'pdf-facade-wrapper pdf-lazy-loader-wrapper';
             wrapper.setAttribute('data-pdf-url', finalPdfUrl);
             wrapper.setAttribute('data-original-src', originalSrc); // Store original src
+            wrapper.setAttribute('data-iframe-width', width); // Store width for restoration
+            wrapper.setAttribute('data-iframe-height', height); // Store height for restoration
             wrapper.style.cssText = `
                 width: ${width};
                 margin: 0 auto 20px;
@@ -603,6 +636,24 @@
                     wrapper = facade.closest('.pdf-facade-wrapper');
                 }
                 
+                // Get preserved dimensions from wrapper data attributes or computed style
+                let wrapperWidth = '';
+                let wrapperHeight = '';
+                if (wrapper) {
+                    // First try to get from data attributes (original dimensions)
+                    wrapperWidth = wrapper.getAttribute('data-iframe-width') || '';
+                    wrapperHeight = wrapper.getAttribute('data-iframe-height') || '';
+                    
+                    // If not in data attributes, get from computed style
+                    if (!wrapperWidth || !wrapperHeight) {
+                        const wrapperComputedStyle = window.getComputedStyle(wrapper);
+                        wrapperWidth = wrapperWidth || wrapperComputedStyle.width || wrapper.style.width || '';
+                        wrapperHeight = wrapperHeight || wrapperComputedStyle.height || wrapper.style.height || '';
+                    }
+                    
+                    console.log('[PDF] Wrapper dimensions to preserve - width:', wrapperWidth, 'height:', wrapperHeight);
+                }
+                
                 // Restore iframe src - use original src if available, otherwise use extracted PDF URL
                 const srcToRestore = originalSrc || pdfUrl;
                 console.log('[PDF] Restoring iframe src:', srcToRestore);
@@ -610,29 +661,84 @@
                 
                 // Remove facade and wrapper
                 if (wrapper) {
+                    // Get wrapper's parent and position before removing
+                    const wrapperParent = wrapper.parentNode;
+                    const wrapperNextSibling = wrapper.nextSibling;
+                    
                     // Remove facade from wrapper
                     const facadeInWrapper = wrapper.querySelector('.pdf-facade-container');
                     if (facadeInWrapper) {
                         facadeInWrapper.remove();
                     }
-                    // Move iframe into wrapper position
-                    if (iframe.parentNode) {
-                        iframe.parentNode.insertBefore(iframe, wrapper);
-                    }
+                    
+                    // Remove wrapper but keep reference to its position
                     wrapper.remove();
+                    
+                    // Insert iframe at wrapper's position
+                    if (wrapperParent) {
+                        if (wrapperNextSibling) {
+                            wrapperParent.insertBefore(iframe, wrapperNextSibling);
+                        } else {
+                            wrapperParent.appendChild(iframe);
+                        }
+                    }
                 } else {
                     facade.remove();
                 }
                 
-                // Show and restore iframe
+                // Show and restore iframe with preserved dimensions
                 iframe.style.display = '';
                 iframe.style.visibility = '';
                 iframe.style.position = '';
-                iframe.style.width = '';
-                iframe.style.height = '';
                 iframe.style.opacity = '';
+                iframe.style.left = '';
+                iframe.style.top = '';
+                iframe.style.pointerEvents = '';
+                iframe.style.zIndex = '';
+                
+                // Apply preserved dimensions from wrapper
+                if (wrapperWidth) {
+                    iframe.style.width = wrapperWidth;
+                    // Set width attribute (remove 'px' for attribute)
+                    const widthValue = wrapperWidth.replace('px', '').replace('%', '');
+                    if (widthValue) {
+                        iframe.setAttribute('width', widthValue + (wrapperWidth.includes('%') ? '%' : ''));
+                    }
+                }
+                if (wrapperHeight) {
+                    iframe.style.height = wrapperHeight;
+                    // Set height attribute (remove 'px' for attribute)
+                    const heightValue = wrapperHeight.replace('px', '').replace('%', '');
+                    if (heightValue) {
+                        iframe.setAttribute('height', heightValue + (wrapperHeight.includes('%') ? '%' : ''));
+                    }
+                }
+                
+                // Force reflow to ensure dimensions are applied
+                iframe.offsetHeight; // Trigger reflow
+                
+                // Remove aria-hidden and tabindex
+                iframe.removeAttribute('aria-hidden');
+                iframe.removeAttribute('tabindex');
                 
                 console.log('[PDF] Iframe restored and visible');
+                console.log('[PDF] Iframe dimensions - width:', iframe.style.width, 'height:', iframe.style.height);
+                console.log('[PDF] Iframe offset dimensions - width:', iframe.offsetWidth, 'height:', iframe.offsetHeight);
+                
+                // Trigger PDFEmbedder reinitialization if available
+                if (typeof jQuery !== 'undefined' && jQuery.fn.pdfEmbedder) {
+                    console.log('[PDF] Reinitializing PDFEmbedder');
+                    try {
+                        jQuery(iframe).pdfEmbedder();
+                    } catch (e) {
+                        console.log('[PDF] PDFEmbedder reinitialization failed:', e);
+                    }
+                }
+                
+                // Also try to trigger resize event for PDFEmbedder
+                if (typeof window.dispatchEvent !== 'undefined') {
+                    window.dispatchEvent(new Event('resize'));
+                }
             }, this.options.loadingTime);
         }
     }

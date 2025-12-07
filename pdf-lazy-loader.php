@@ -82,19 +82,21 @@ function pdf_lazy_loader_sanitize_checkbox($value) {
 function pdf_lazy_loader_update_checkbox($value, $old_value) {
     // Check if this is a form submission from our settings page
     // WordPress settings API includes 'option_page' in POST when form is submitted
-    $is_form_submission = isset($_POST['option_page']) && 
-                         $_POST['option_page'] === 'pdf_lazy_loader_settings' &&
-                         isset($_POST['_wpnonce']);
+    // Sanitize POST values for security
+    $option_page = isset($_POST['option_page']) ? sanitize_text_field($_POST['option_page']) : '';
+    $wpnonce = isset($_POST['_wpnonce']) ? sanitize_text_field($_POST['_wpnonce']) : '';
+    $is_form_submission = $option_page === 'pdf_lazy_loader_settings' && !empty($wpnonce);
     
     if ($is_form_submission) {
-        // Form submission: with hidden input, value will always be present in POST
+        // Form submission: with hidden input, the field will always be present in POST
         // If checkbox is checked, value will be '1', if unchecked, value will be '0' (from hidden input)
         // WordPress processes form fields in order, so checkbox value overrides hidden input if checked
-        if (!isset($_POST['pdf_lazy_loader_enable_download'])) {
-            return false;
-        }
-        // Value will be '1' if checked, '0' if unchecked (from hidden input)
-        return $value === '1' || $value === 1 || $value === true;
+        // Sanitize POST value before use for security
+        $post_value = isset($_POST['pdf_lazy_loader_enable_download']) 
+            ? sanitize_text_field($_POST['pdf_lazy_loader_enable_download']) 
+            : '0';
+        // Return true only if value is '1' (checkbox checked), false otherwise
+        return $post_value === '1' || $post_value === 1 || $post_value === true;
     }
     
     // Programmatic update (via update_option, REST API, etc.): use the $value parameter directly
