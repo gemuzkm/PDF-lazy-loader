@@ -80,11 +80,33 @@ function pdf_lazy_loader_sanitize_checkbox($value) {
  * Update checkbox option - handle unchecked state
  */
 function pdf_lazy_loader_update_checkbox($value, $old_value) {
-    // If checkbox is not in POST, it means it's unchecked
-    if (!isset($_POST['pdf_lazy_loader_enable_download'])) {
+    // Check if this is a form submission from our settings page
+    // WordPress settings API includes 'option_page' in POST when form is submitted
+    $is_form_submission = isset($_POST['option_page']) && 
+                         $_POST['option_page'] === 'pdf_lazy_loader_settings' &&
+                         isset($_POST['_wpnonce']);
+    
+    if ($is_form_submission) {
+        // Form submission: checkbox is checked if present in POST, unchecked if not
+        // WordPress doesn't send unchecked checkboxes in POST
+        if (!isset($_POST['pdf_lazy_loader_enable_download'])) {
+            return false;
+        }
+        // Checkbox is checked, validate the value
+        return $value === '1' || $value === 1 || $value === true;
+    }
+    
+    // Programmatic update (via update_option, REST API, etc.): use the $value parameter directly
+    // Convert various truthy values to boolean
+    if ($value === '1' || $value === 1 || $value === true || $value === 'true') {
+        return true;
+    }
+    if ($value === '0' || $value === 0 || $value === false || $value === 'false' || $value === null || $value === '') {
         return false;
     }
-    return $value === '1' || $value === 1 || $value === true;
+    
+    // Default: return as boolean
+    return (bool) $value;
 }
 
 /**
