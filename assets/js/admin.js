@@ -83,13 +83,27 @@
 
     /**
      * Загрузка статистики (опционально, если элемент существует)
+     * Note: Statistics feature is disabled as AJAX endpoint is not implemented
      */
     function loadStats() {
         var $statsContainer = $('#pdf-lazy-loader-stats');
         if ($statsContainer.length === 0) return;
         
-        // Проверяем наличие необходимых данных
-        if (typeof pdfLazyLoaderAdmin === 'undefined' || !pdfLazyLoaderAdmin.ajaxUrl) {
+        // Statistics feature is not implemented - show message or remove this function
+        // If you want to implement statistics, you need to:
+        // 1. Add AJAX endpoint in PHP
+        // 2. Add ajaxUrl and nonce to wp_localize_script
+        // 3. Uncomment the AJAX call below
+        
+        // For now, just show a placeholder message
+        $statsContainer.html('<p>Statistics feature is not available.</p>');
+        
+        /* Uncomment when AJAX endpoint is implemented:
+        // Check if AJAX parameters are available
+        if (typeof pdfLazyLoaderAdmin === 'undefined' || 
+            !pdfLazyLoaderAdmin.ajaxUrl || 
+            !pdfLazyLoaderAdmin.nonce) {
+            $statsContainer.html('<p>Statistics feature is not configured.</p>');
             return;
         }
         
@@ -98,17 +112,20 @@
             type: 'POST',
             data: {
                 action: 'pdf_lazy_loader_stats',
-                nonce: pdfLazyLoaderAdmin.nonce || ''
+                nonce: pdfLazyLoaderAdmin.nonce
             },
             success: function(response) {
                 if (response.success && response.data && response.data.stats) {
                     renderStats(response.data.stats);
+                } else {
+                    $statsContainer.html('<p>No statistics available.</p>');
                 }
             },
             error: function() {
-                console.log('Could not load statistics');
+                $statsContainer.html('<p>Could not load statistics.</p>');
             }
         });
+        */
     }
 
     /**

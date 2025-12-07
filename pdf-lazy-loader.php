@@ -87,12 +87,13 @@ function pdf_lazy_loader_update_checkbox($value, $old_value) {
                          isset($_POST['_wpnonce']);
     
     if ($is_form_submission) {
-        // Form submission: checkbox is checked if present in POST, unchecked if not
-        // WordPress doesn't send unchecked checkboxes in POST
+        // Form submission: with hidden input, value will always be present in POST
+        // If checkbox is checked, value will be '1', if unchecked, value will be '0' (from hidden input)
+        // WordPress processes form fields in order, so checkbox value overrides hidden input if checked
         if (!isset($_POST['pdf_lazy_loader_enable_download'])) {
             return false;
         }
-        // Checkbox is checked, validate the value
+        // Value will be '1' if checked, '0' if unchecked (from hidden input)
         return $value === '1' || $value === 1 || $value === true;
     }
     
@@ -113,11 +114,19 @@ function pdf_lazy_loader_update_checkbox($value, $old_value) {
  * Get plugin settings
  */
 function pdf_lazy_loader_get_settings() {
+    $enableDownload = get_option('pdf_lazy_loader_enable_download', false);
+    // Convert string '1' or '0' to boolean
+    if ($enableDownload === '1' || $enableDownload === 1 || $enableDownload === true) {
+        $enableDownload = true;
+    } else {
+        $enableDownload = false;
+    }
+    
     return array(
         'buttonColor' => get_option('pdf_lazy_loader_button_color', '#FF6B6B'),
         'buttonColorHover' => get_option('pdf_lazy_loader_button_color_hover', '#E63946'),
         'loadingTime' => intval(get_option('pdf_lazy_loader_loading_time', 1500)),
-        'enableDownload' => (bool) get_option('pdf_lazy_loader_enable_download', false),
+        'enableDownload' => $enableDownload,
     );
 }
 
@@ -258,6 +267,12 @@ function pdf_lazy_loader_settings_page() {
                         <label for="pdf_lazy_loader_enable_download">Show Download Button</label>
                     </th>
                     <td>
+                        <!-- Hidden input to ensure unchecked state is sent -->
+                        <input
+                            type="hidden"
+                            name="pdf_lazy_loader_enable_download"
+                            value="0"
+                        />
                         <input
                             type="checkbox"
                             id="pdf_lazy_loader_enable_download"

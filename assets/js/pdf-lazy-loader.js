@@ -10,7 +10,16 @@
     // Get options from WordPress
     const getOptions = () => {
         if (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) {
-            return pdfLazyLoaderData;
+            // Convert enableDownload to boolean if it's a string
+            const options = { ...pdfLazyLoaderData };
+            if (typeof options.enableDownload === 'string') {
+                options.enableDownload = options.enableDownload === '1' || options.enableDownload === 'true';
+            }
+            // Convert loadingTime to number if it's a string
+            if (typeof options.loadingTime === 'string') {
+                options.loadingTime = parseInt(options.loadingTime, 10) || 1500;
+            }
+            return options;
         }
         // Default fallback
         return {
@@ -51,6 +60,13 @@
          * Check if an iframe contains a PDF
          */
         isPDFIframe(iframe) {
+            // Skip if already processed (has our wrapper nearby)
+            if (iframe.parentElement && 
+                (iframe.parentElement.querySelector('.pdf-lazy-loader-wrapper') || 
+                 iframe.nextElementSibling?.classList?.contains('pdf-lazy-loader-wrapper'))) {
+                return false;
+            }
+
             const src = iframe.getAttribute('src') || '';
             const dataSrc = iframe.getAttribute('data-src') || '';
             const className = iframe.className || '';
@@ -64,7 +80,8 @@
                 'pdfembed',
                 'pdfjs',
                 'viewer.html',
-                'pdf-viewer'
+                'pdf-viewer',
+                'pdfemb-data' // PDFEmbedder parameter
             ];
 
             const srcToCheck = src || dataSrc;
@@ -82,7 +99,8 @@
                 'pdf-embedder',
                 'pdfembed',
                 'pdf-viewer',
-                'pdf-container'
+                'pdf-container',
+                'pdfemb-wrapper'
             ];
 
             for (const pdfClass of pdfClasses) {
@@ -114,6 +132,28 @@
                         iframe.getAttribute('data-src') || 
                         '';
 
+            // Check for PDFEmbedder format: ?pdfemb-data=base64encoded
+            if (pdfUrl.includes('pdfemb-data')) {
+                try {
+                    const url = new URL(pdfUrl, window.location.href);
+                    const pdfembData = url.searchParams.get('pdfemb-data');
+                    if (pdfembData) {
+                        // Decode base64
+                        const decoded = atob(pdfembData);
+                        const data = JSON.parse(decoded);
+                        if (data.url) {
+                            pdfUrl = data.url;
+                            console.log('[PDF] Extracted PDF URL from pdfemb-data:', pdfUrl);
+                        } else {
+                            console.log('[PDF] pdfemb-data decoded but no URL found:', data);
+                        }
+                    }
+                } catch (e) {
+                    console.log('[PDF] Could not parse pdfemb-data:', e);
+                    // Keep original URL if decoding fails
+                }
+            }
+
             // If URL contains viewer.html or similar, try to extract actual PDF URL
             if (pdfUrl.includes('viewer.html') || pdfUrl.includes('pdfjs')) {
                 // Try to get PDF URL from URL parameters
@@ -131,9 +171,10 @@
             }
 
             // If still no URL, check data attributes
-            if (!pdfUrl) {
+            if (!pdfUrl || pdfUrl.includes('pdfemb-data')) {
                 pdfUrl = iframe.getAttribute('data-pdf-url') || 
                         iframe.getAttribute('data-url') ||
+                        iframe.getAttribute('data-pdfemb-url') ||
                         '';
             }
 
@@ -211,47 +252,115 @@
             // Mark as processed
             this.processedIframes.add(iframe);
 
+            // Save original src BEFORE extracting URL
+            const originalSrc = iframe.getAttribute('src') || '';
+            
+            // Get iframe dimensions BEFORE doing anything else!
+            const computedStyle = window.getComputedStyle(iframe);
+            let width = iframe.getAttribute('width') || '';
+            let height = iframe.getAttribute('height') || '';
+            
+            // Get actual rendered dimensions first
+            const offsetWidth = iframe.offsetWidth;
+            const offsetHeight = iframe.offsetHeight;
+            
+            console.log('[PDF] Iframe raw dimensions - offsetWidth:', offsetWidth, 'offsetHeight:', offsetHeight);
+            console.log('[PDF] Iframe attributes - width:', iframe.getAttribute('width'), 'height:', iframe.getAttribute('height'));
+            console.log('[PDF] Iframe computed - width:', computedStyle.width, 'height:', computedStyle.height);
+            
+            // Priority: offsetWidth/offsetHeight > attributes > computed style > defaults
+            if (offsetWidth > 10) { // Use offsetWidth if it's reasonable (more than 10px)
+                width = offsetWidth + 'px';
+            } else if (width && width !== 'auto' && width !== '0px' && width !== '1px') {
+                // Use attribute if valid and not 1px
+            } else if (computedStyle.width && computedStyle.width !== 'auto' && computedStyle.width !== '0px' && computedStyle.width !== '1px') {
+                width = computedStyle.width;
+            } else {
+                // Check parent container width
+                const parent = iframe.parentElement;
+                if (parent) {
+                    const parentWidth = parent.offsetWidth || window.getComputedStyle(parent).width;
+                    if (parentWidth && parentWidth !== 'auto' && parentWidth !== '0px') {
+                        width = parentWidth;
+                    } else {
+                        width = '100%';
+                    }
+                } else {
+                    width = '100%';
+                }
+            }
+            
+            if (offsetHeight > 10) { // Use offsetHeight if it's reasonable (more than 10px)
+                height = offsetHeight + 'px';
+            } else if (height && height !== 'auto' && height !== '0px' && height !== '1px') {
+                // Use attribute if valid and not 1px
+            } else if (computedStyle.height && computedStyle.height !== 'auto' && computedStyle.height !== '0px' && computedStyle.height !== '1px') {
+                height = computedStyle.height;
+            } else {
+                height = '600px'; // Default height
+            }
+
+            // Ensure we have valid dimensions
+            if (!width || width === '0px' || width === 'auto' || width === '1px') width = '100%';
+            if (!height || height === '0px' || height === 'auto' || height === '1px') height = '600px';
+
+            console.log('[PDF] Final iframe dimensions - width:', width, 'height:', height);
+            
             const pdfUrl = this.extractPDFUrl(iframe);
             
-            if (!pdfUrl) {
-                console.log('[PDF] No PDF URL found, skipping');
+            // If we couldn't extract a different URL, use original src
+            // For pdfemb-data URLs, we keep the original src to restore the iframe properly
+            const finalPdfUrl = (pdfUrl && pdfUrl !== originalSrc && !pdfUrl.includes('pdfemb-data')) ? pdfUrl : originalSrc;
+            
+            if (!finalPdfUrl) {
+                console.log('[PDF] No valid PDF URL found, skipping');
+                console.log('[PDF] Original src:', originalSrc);
+                console.log('[PDF] Extracted URL:', pdfUrl);
                 return;
             }
 
-            console.log('[PDF] PDF URL:', pdfUrl);
+            // Log URL information
+            console.log('[PDF] URL processing:');
+            console.log('[PDF] - Original src:', originalSrc);
+            console.log('[PDF] - Extracted URL:', pdfUrl);
+            console.log('[PDF] - Final PDF URL:', finalPdfUrl);
+
+            console.log('[PDF] PDF URL:', finalPdfUrl);
+            console.log('[PDF] Original src:', originalSrc);
             console.log('[PDF] *** IFRAME HIDDEN IMMEDIATELY ***');
 
             // Remove src immediately to prevent loading
-            const originalSrc = iframe.getAttribute('src');
             iframe.removeAttribute('src');
             
-            // Hide iframe immediately to prevent background loading
+            // Hide iframe completely - use multiple methods to ensure it's hidden
             iframe.style.display = 'none';
             iframe.style.visibility = 'hidden';
             iframe.style.position = 'absolute';
-            iframe.style.width = '0';
-            iframe.style.height = '0';
+            iframe.style.left = '-9999px';
+            iframe.style.top = '-9999px';
+            iframe.style.width = '1px';
+            iframe.style.height = '1px';
             iframe.style.opacity = '0';
-
-            // Get iframe dimensions
-            const computedStyle = window.getComputedStyle(iframe);
-            const width = iframe.getAttribute('width') || 
-                        computedStyle.width || 
-                        iframe.style.width || 
-                        '100%';
-            const height = iframe.getAttribute('height') || 
-                         computedStyle.height || 
-                         iframe.style.height || 
-                         '600px';
+            iframe.style.pointerEvents = 'none';
+            iframe.style.zIndex = '-1';
+            
+            // Also set attributes to prevent any rendering
+            iframe.setAttribute('aria-hidden', 'true');
+            iframe.setAttribute('tabindex', '-1');
 
             // Create facade wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'pdf-facade-wrapper pdf-lazy-loader-wrapper';
-            wrapper.setAttribute('data-pdf-url', pdfUrl);
+            wrapper.setAttribute('data-pdf-url', finalPdfUrl);
+            wrapper.setAttribute('data-original-src', originalSrc); // Store original src
             wrapper.style.cssText = `
                 width: ${width};
                 margin: 0 auto 20px;
                 position: relative;
+                display: block;
+                visibility: visible;
+                opacity: 1;
+                z-index: 1;
             `;
 
             // Create facade container
@@ -260,16 +369,21 @@
             facade.style.cssText = `
                 width: 100%;
                 height: ${height};
+                min-height: 400px;
                 border: 1px solid #ddd;
                 border-radius: 8px;
                 background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
-                display: flex;
+                display: flex !important;
                 flex-direction: column;
                 align-items: center;
                 justify-content: center;
                 position: relative;
                 overflow: hidden;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                visibility: visible !important;
+                opacity: 1 !important;
+                z-index: 10;
+                box-sizing: border-box;
             `;
 
             // Create facade content
@@ -354,7 +468,10 @@
             // Click handler
             viewButton.addEventListener('click', () => {
                 console.log('[PDF] View button clicked');
-                this.loadPDF(iframe, facade, pdfUrl, originalSrc);
+                // Get original src from wrapper if available
+                const storedOriginalSrc = wrapper.getAttribute('data-original-src') || originalSrc;
+                const storedPdfUrl = wrapper.getAttribute('data-pdf-url') || finalPdfUrl;
+                this.loadPDF(iframe, facade, storedPdfUrl, storedOriginalSrc, wrapper);
             });
 
             buttonsContainer.appendChild(viewButton);
@@ -365,7 +482,7 @@
                 const downloadButton = document.createElement('a');
                 downloadButton.className = 'pdf-download-button pdf-lazy-loader-download-btn';
                 downloadButton.textContent = '⬇️ Download';
-                downloadButton.href = pdfUrl;
+                downloadButton.href = finalPdfUrl;
                 downloadButton.download = '';
                 downloadButton.style.cssText = `
                     padding: 12px 24px;
@@ -405,15 +522,55 @@
 
             // Insert facade before iframe
             if (iframe.parentNode) {
-                iframe.parentNode.insertBefore(wrapper, iframe);
+                // Try to insert before iframe
+                try {
+                    iframe.parentNode.insertBefore(wrapper, iframe);
+                    console.log('[PDF] Facade inserted into DOM before iframe');
+                } catch (e) {
+                    // If insertBefore fails, try appendChild
+                    console.log('[PDF] insertBefore failed, trying appendChild:', e);
+                    iframe.parentNode.appendChild(wrapper);
+                }
+            } else {
+                console.error('[PDF] Cannot insert facade - iframe has no parent node');
+                return;
             }
 
-            console.log('[PDF] Facade created');
+            // Ensure facade is visible with important flags
+            wrapper.style.setProperty('display', 'block', 'important');
+            wrapper.style.setProperty('visibility', 'visible', 'important');
+            wrapper.style.setProperty('opacity', '1', 'important');
+            wrapper.style.setProperty('z-index', '10', 'important');
+            wrapper.style.setProperty('position', 'relative', 'important');
+
+            // Verify facade is in DOM and visible
+            setTimeout(() => {
+                const isInDOM = document.body.contains(wrapper) || iframe.parentNode.contains(wrapper);
+                const computedDisplay = window.getComputedStyle(wrapper).display;
+                const computedVisibility = window.getComputedStyle(wrapper).visibility;
+                const computedOpacity = window.getComputedStyle(wrapper).opacity;
+                
+                console.log('[PDF] Facade verification:');
+                console.log('[PDF] - In DOM:', isInDOM);
+                console.log('[PDF] - Display:', computedDisplay);
+                console.log('[PDF] - Visibility:', computedVisibility);
+                console.log('[PDF] - Opacity:', computedOpacity);
+                console.log('[PDF] - Wrapper dimensions:', wrapper.offsetWidth, 'x', wrapper.offsetHeight);
+                console.log('[PDF] - Facade dimensions:', facade.offsetWidth, 'x', facade.offsetHeight);
+                
+                if (!isInDOM || computedDisplay === 'none' || computedVisibility === 'hidden' || computedOpacity === '0') {
+                    console.error('[PDF] WARNING: Facade may not be visible!');
+                }
+            }, 100);
+
+            console.log('[PDF] Facade created and should be visible');
         }
 
-        loadPDF(iframe, facade, pdfUrl, originalSrc) {
+        loadPDF(iframe, facade, pdfUrl, originalSrc, wrapper) {
             console.log('[PDF] loadPDF called');
             console.log('[PDF] Starting loading animation: ' + this.options.loadingTime + 'ms');
+            console.log('[PDF] Original src:', originalSrc);
+            console.log('[PDF] PDF URL:', pdfUrl);
 
             // Show loading state
             const loadingText = document.createElement('div');
@@ -441,16 +598,27 @@
             setTimeout(() => {
                 console.log('[PDF] IFRAME SHOWN');
                 
-                // Restore iframe src
-                if (originalSrc) {
-                    iframe.setAttribute('src', originalSrc);
-                } else {
-                    iframe.setAttribute('src', pdfUrl);
+                // Get wrapper if not provided
+                if (!wrapper) {
+                    wrapper = facade.closest('.pdf-facade-wrapper');
                 }
                 
-                // Remove facade
-                const wrapper = facade.closest('.pdf-facade-wrapper');
+                // Restore iframe src - use original src if available, otherwise use extracted PDF URL
+                const srcToRestore = originalSrc || pdfUrl;
+                console.log('[PDF] Restoring iframe src:', srcToRestore);
+                iframe.setAttribute('src', srcToRestore);
+                
+                // Remove facade and wrapper
                 if (wrapper) {
+                    // Remove facade from wrapper
+                    const facadeInWrapper = wrapper.querySelector('.pdf-facade-container');
+                    if (facadeInWrapper) {
+                        facadeInWrapper.remove();
+                    }
+                    // Move iframe into wrapper position
+                    if (iframe.parentNode) {
+                        iframe.parentNode.insertBefore(iframe, wrapper);
+                    }
                     wrapper.remove();
                 } else {
                     facade.remove();
@@ -463,6 +631,8 @@
                 iframe.style.width = '';
                 iframe.style.height = '';
                 iframe.style.opacity = '';
+                
+                console.log('[PDF] Iframe restored and visible');
             }, this.options.loadingTime);
         }
     }
