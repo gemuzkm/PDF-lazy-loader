@@ -1,254 +1,120 @@
-# 🚀 PDF LAZY LOADER v1.0.4 - PRODUCTION READY
+# PDF Lazy Loader v1.0.6
 
-## ✅ ALL 6 ISSUES FIXED
+WordPress plugin that optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks.
 
----
+## Features
 
-## 🔧 WHAT WAS FIXED
+- **Lazy Loading**: PDFs load only when user clicks "View PDF" button
+- **URL Encryption**: PDF URLs are encrypted to prevent scraping
+- **Cloudflare Turnstile**: Optional bot protection before viewing/downloading PDFs
+- **Responsive Design**: Configurable facade heights for desktop, tablet, and mobile
+- **Download Support**: Optional download button for PDF files
+- **Debug Mode**: Detailed console logging for troubleshooting
+- **Server-Side Protection**: PHP filter removes PDF URLs from HTML source before sending to browser
 
-### 1. ✅ Download Button Toggle Works Perfectly
-**Problem:** Checkbox value not saved when unchecked  
-**Solution:** Explicit check for `=== '1'` during save  
-**Test:** Settings → "Show Download Button" → OFF → Save → Reload → Button Gone ✓
+## Installation
 
-### 2. ✅ PDF Not Loading in Background
-**Problem:** iframe visible while PDF loading (lazy loading broken)  
-**Solution:** `iframe.style.display = 'none'` BEFORE facade creation  
-**Test:** F12 Network → PDF NOT in request list on page load ✓
+1. Upload the plugin folder to `/wp-content/plugins/`
+2. Activate the plugin through the 'Plugins' menu in WordPress
+3. Go to Settings → PDF Lazy Loader to configure
 
-### 3. ✅ "Enable Plugin" Field Removed
-**Reason:** Useless field - if plugin is active, it works  
-**Result:** Admin panel now has only 4 essential options  
-**Test:** Settings → No "Enable Plugin" field ✓
+## Configuration
 
-### 4. ✅ Debug Mode Removed
-**Was:** Separate admin panel field  
-**Now:** Auto-logging to F12 Console with `[PDF]` prefix  
-**Test:** Settings → No "Debug Mode" field, logs visible in console ✓
+### Basic Settings
 
-### 5. ✅ "Exclude Pages (by ID)" Removed
-**Reason:** Overcomplicated - just disable plugin if needed  
-**Result:** Simplified settings  
-**Test:** Settings → No "Exclude Pages" field ✓
+- **Button Color**: Color of the "View PDF" button
+- **Button Hover Color**: Color on hover
+- **Loading Animation Duration**: Duration in milliseconds (500-5000)
+- **Show Download Button**: Enable/disable download functionality
 
-### 6. ✅ All Text in English
-**Changed:**
-- Plugin description
-- Admin panel labels  
-- Button text
-- All comments in code
-- Error messages
-- Help text
+### Facade Heights
 
-**Test:** Settings page → Everything in English ✓
+- **Desktop** (≥1024px): Default 600px
+- **Tablet** (768px-1023px): Default 500px
+- **Mobile** (<768px): Default 400px
 
----
+### Cloudflare Turnstile
 
-## 📥 FILES TO DOWNLOAD v1.0.4
+- **Enable Turnstile**: Enable bot protection
+- **Turnstile Site Key**: Your Cloudflare Turnstile site key
+- **Turnstile Secret Key**: Your Cloudflare Turnstile secret key (stored securely)
+
+### Debug Settings
+
+- **Enable Debug Mode**: Enable detailed console logging (disable in production)
+
+## Security Features
+
+- PDF URLs encrypted using XOR cipher + Base64 encoding
+- URLs removed from HTML source code (server-side filtering)
+- No direct links visible in page source
+- Optional Cloudflare Turnstile verification
+- iframe hidden immediately to prevent background loading
+
+## Technical Details
+
+### Server-Side Filtering
+
+The plugin filters content on the server side using WordPress filters:
+- `the_content` - Main post/page content
+- `widget_text` - Text widgets
+- `widget_block_content` - Block widgets
+- `rest_prepare_post` - REST API content
+
+### Client-Side Interception
+
+Inline JavaScript intercepts PDF iframes before they start loading:
+- Prototype interception for `setAttribute` and `src` setter
+- MutationObserver for dynamically added iframes
+- Multiple execution strategies for early interception
+
+### Encryption
+
+- **Algorithm**: XOR cipher with Base64 encoding
+- **Key**: `pdf-lazy-loader-secure-key-2024`
+- **Compatibility**: Same algorithm in PHP and JavaScript
+
+## File Structure
 
 ```
-✅ pdf-lazy-loader.php        (PHP plugin file)
-✅ pdf-lazy-loader.js         (JavaScript handler)
-✅ admin.css                  (Admin panel styles)
-✅ admin.js                   (Admin panel scripts)
-```
-
-**Installation:**
-```
-/wp-content/plugins/pdf-lazy-loader/
+pdf-lazy-loader/
 ├── pdf-lazy-loader.php
-├── assets/
-│   ├── js/
-│   │   ├── pdf-lazy-loader.js
-│   │   └── admin.js
-│   └── css/
-│       └── admin.css
+├── README.md
+└── assets/
+    ├── css/
+    │   ├── admin.css
+    │   └── pdf-lazy-loader.css
+    └── js/
+        ├── admin.js
+        └── pdf-lazy-loader.js
 ```
 
----
+## Requirements
 
-## 🚀 QUICK INSTALL (2 MINUTES)
+- WordPress 5.0 or higher
+- PHP 7.2 or higher
+- JavaScript enabled in browser
 
-```
-1. Download all 4 files
-2. Upload to /wp-content/plugins/pdf-lazy-loader/
-3. Replace existing files
-4. Ctrl+Shift+Delete (clear browser cache)
-5. Verify on page with PDF
-6. Done! ✅
-```
+## Version History
 
----
+### v1.0.6
+- Added URL encryption (XOR + Base64)
+- Server-side content filtering
+- Cloudflare Turnstile integration
+- Responsive facade heights
+- Debug mode
+- Improved iframe interception
 
-## 🧪 FINAL VERIFICATION (6 TESTS)
+### v1.0.4
+- Fixed download button toggle
+- Fixed PDF background loading
+- Removed unnecessary settings
+- All text in English
 
-### Test 1: Admin Panel (4 Options Only)
-```
-Settings → PDF Lazy Loader
-✓ Button Color
-✓ Button Hover Color  
-✓ Loading Time (ms)
-✓ Show Download Button
+## License
 
-✗ No "Enable Plugin"
-✗ No "Debug Mode"
-✗ No "Exclude Pages"
-```
+GPL v2 or later
 
-### Test 2: Download Button OFF
-```
-Settings → Show Download Button → OFF → Save
-F5 Refresh
-Page with PDF
-✓ "View PDF" button visible
-✗ "Download" button hidden
-```
+## Support
 
-### Test 3: Download Button ON
-```
-Settings → Show Download Button → ON → Save
-F5 Refresh
-Page with PDF
-✓ "View PDF" button visible
-✓ "Download" button visible
-```
-
-### Test 4: PDF Not Loading in Background
-```
-https://carfusepro.com/test-pdf/
-F12 → Network → Ctrl+R
-✓ PDF file NOT in request list
-✓ Only preview/facade loads
-✓ No PDF in background
-```
-
-### Test 5: PDF Loads on Click
-```
-Click "View PDF" button
-✓ Loading animation shows (1.5s)
-✓ PDF appears after delay
-✓ F12 Network → PDF now visible
-```
-
-### Test 6: Console Logging Works
-```
-F12 → Console
-✓ [PDF] Initializing v1.0.4
-✓ [PDF] Found X iframe(s)
-✓ [PDF] Processing iframe...
-✓ [PDF] Download enabled: true/false
-✓ [PDF] View button clicked
-✓ [PDF] IFRAME HIDDEN IMMEDIATELY
-✓ [PDF] IFRAME SHOWN
-```
-
----
-
-## 🌐 LANGUAGE
-
-**All text now in English:**
-- Plugin name: "PDF Lazy Loader"
-- Description: "Optimize PDF loading with lazy loading pattern. Simple and secure."
-- Settings labels: "Button Color", "Loading Time", etc.
-- Button text: "View PDF", "Download", "Loading PDF..."
-- Console logs: `[PDF]` prefix with English messages
-- Comments in code: All English
-
----
-
-## 📊 ADMIN PANEL v1.0.4
-
-| Setting | Type | Default | Purpose |
-|---------|------|---------|---------|
-| Button Color | Color Picker | #FF6B6B | "View PDF" button color |
-| Button Hover | Color Picker | #E63946 | Hover state color |
-| Loading Time | Number (ms) | 1500 | Animation duration (500-5000) |
-| Download | Toggle | ON | Show/hide download button |
-
-**Total: 4 settings** (was 7 in v1.0.3)
-
----
-
-## 🔐 SECURITY
-
-✅ PDF URLs protected (base64 encoded)  
-✅ No direct links in HTML source  
-✅ iframe hidden immediately  
-✅ Load only on user click  
-✅ XOR encryption ready (if needed)
-
----
-
-## 💻 LOGGING SYSTEM
-
-**Console logs (F12 → Console):**
-```
-[PDF] Initializing v1.0.4
-[PDF] Options: {buttonColor: "#FF6B6B", ...}
-[PDF] Finding PDF iframes...
-[PDF] Found 1 iframe(s)
-[PDF] Processing iframe...
-[PDF] *** IFRAME HIDDEN IMMEDIATELY ***
-[PDF] Facade created
-[PDF] Download enabled: true
-[PDF] View button clicked
-[PDF] loadPDF called
-[PDF] Starting loading animation: 1500ms
-[PDF] IFRAME SHOWN
-```
-
-**Available in console:**
-```javascript
-window.PDFLazyLoader  // Access plugin class
-```
-
----
-
-## 📝 VERSION INFO
-
-```
-╔═══════════════════════════════════════════╗
-║  PDF LAZY LOADER v1.0.4                   ║
-║                                           ║
-║  ✅ Download button works perfectly        ║
-║  ✅ PDF loads on click only                ║
-║  ✅ No "Enable Plugin" field               ║
-║  ✅ No "Debug Mode" field                  ║
-║  ✅ No "Exclude Pages" field               ║
-║  ✅ 100% English text                      ║
-║                                           ║
-║  Settings: 4 options (clean & simple)     ║
-║  Logging: Auto to F12 Console             ║
-║  Tests: All 6 passed ✓                    ║
-║                                           ║
-║  License: MIT                             ║
-║  Status: PRODUCTION READY ✅              ║
-╚═══════════════════════════════════════════╝
-```
-
----
-
-## ✨ KEY IMPROVEMENTS
-
-| Feature | v1.0.3 | v1.0.4 | Change |
-|---------|--------|--------|--------|
-| Settings | 7 | 4 | -43% ⬇️ |
-| Download button | ❌ | ✅ | FIXED |
-| PDF background load | ❌ | ✅ | FIXED |
-| Language | Mixed | English | 100% |
-| Code comments | Russian | English | 100% |
-| Complexity | High | Simple | REDUCED |
-
----
-
-## 🎯 READY TO USE
-
-✅ All files downloaded  
-✅ All 6 issues fixed  
-✅ All 6 tests passed  
-✅ Code thoroughly tested  
-✅ Production ready  
-
-**If questions → F12 Console → Look at `[PDF]` logs**
-
-**Thank you for detailed feedback! 🚀**
+For issues and questions, check the browser console (F12) with debug mode enabled.

@@ -1,60 +1,43 @@
-/**
- * PDF Lazy Loader - Admin JavaScript
- * Управление панелью администратора
- */
+
 
 (function($) {
     'use strict';
 
     $(document).ready(function() {
-        // Инициализация color picker
         initColorPickers();
 
-        // Обработчик сохранения
         handleFormSubmit();
 
-        // Загрузка статистики
         loadStats();
 
-        // Проверка совместимости
         checkCompatibility();
 
-        // Инициализация превью
         initPreview();
         
-        // Обновление превью при изменении настроек
         updatePreviewOnChange();
         
-        // Автоматическое скрытие уведомлений (только наших, не системных)
-        // Запускаем с небольшой задержкой, чтобы не мешать системным уведомлениям
         setTimeout(function() {
             autoHideNotifications();
             removeDuplicateNotifications();
         }, 100);
     });
 
-    /**
-     * Инициализация color picker
-     */
+
     function initColorPickers() {
         if (typeof jQuery.wp !== 'undefined' && typeof jQuery.wp.wpColorPicker !== 'undefined') {
             $('input[type="color"]').wpColorPicker();
         }
     }
 
-    /**
-     * Обработчик отправки формы
-     */
+
     function handleFormSubmit() {
         $('form').on('submit', function(e) {
             var $form = $(this);
             
-            // Проверяем, что это форма настроек плагина
             if (!$form.find('input[name="pdf_lazy_loader_button_color"]').length) {
                 return true;
             }
             
-            // Валидация цветов
             var buttonColor = $form.find('input[name="pdf_lazy_loader_button_color"]').val();
             if (buttonColor && !isValidHexColor(buttonColor)) {
                 alert('Invalid button color');
@@ -69,7 +52,6 @@
                 return false;
             }
 
-            // Валидация времени загрузки
             var loadingTime = parseInt($form.find('input[name="pdf_lazy_loader_loading_time"]').val(), 10);
             if (isNaN(loadingTime) || loadingTime < 500 || loadingTime > 5000) {
                 alert('Loading time must be between 500 and 5000 ms');
@@ -81,63 +63,23 @@
         });
     }
 
-    /**
-     * Проверка валидности hex цвета
-     */
+
     function isValidHexColor(color) {
         return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/.test(color);
     }
 
-    /**
-     * Загрузка статистики (опционально, если элемент существует)
-     * Note: Statistics feature is disabled as AJAX endpoint is not implemented
-     */
+
     function loadStats() {
         var $statsContainer = $('#pdf-lazy-loader-stats');
         if ($statsContainer.length === 0) return;
         
-        // Statistics feature is not implemented - show message or remove this function
-        // If you want to implement statistics, you need to:
-        // 1. Add AJAX endpoint in PHP
-        // 2. Add ajaxUrl and nonce to wp_localize_script
-        // 3. Uncomment the AJAX call below
         
-        // For now, just show a placeholder message
         $statsContainer.html('<p>Statistics feature is not available.</p>');
         
-        /* Uncomment when AJAX endpoint is implemented:
-        // Check if AJAX parameters are available
-        if (typeof pdfLazyLoaderAdmin === 'undefined' || 
-            !pdfLazyLoaderAdmin.ajaxUrl || 
-            !pdfLazyLoaderAdmin.nonce) {
-            $statsContainer.html('<p>Statistics feature is not configured.</p>');
-            return;
-        }
-        
-        $.ajax({
-            url: pdfLazyLoaderAdmin.ajaxUrl,
-            type: 'POST',
-            data: {
-                action: 'pdf_lazy_loader_stats',
-                nonce: pdfLazyLoaderAdmin.nonce
-            },
-            success: function(response) {
-                if (response.success && response.data && response.data.stats) {
-                    renderStats(response.data.stats);
-                } else {
-                    $statsContainer.html('<p>No statistics available.</p>');
-                }
-            },
-            error: function() {
-                $statsContainer.html('<p>Could not load statistics.</p>');
-            }
-        });
-        */
+
     }
 
-    /**
-     * Отрендерить статистику
-     */
+
     function renderStats(stats) {
         var $statsContainer = $('#pdf-lazy-loader-stats');
         if ($statsContainer.length === 0) return;
@@ -156,9 +98,7 @@
         $statsContainer.html(html);
     }
 
-    /**
-     * Проверка совместимости (опционально, если элемент существует)
-     */
+
     function checkCompatibility() {
         var $status = $('#pdf-lazy-loader-compatibility-status');
         if ($status.length === 0) return;
@@ -178,9 +118,7 @@
         $status.html(html);
     }
 
-    /**
-     * Получить текущие настройки из формы
-     */
+
     function getCurrentSettings() {
         return {
             buttonColor: $('input[name="pdf_lazy_loader_button_color"]').val() || '#FF6B6B',
@@ -190,9 +128,7 @@
         };
     }
 
-    /**
-     * Инициализация превью
-     */
+
     function initPreview() {
         var $previewContainer = $('#pdf-lazy-loader-preview');
         if ($previewContainer.length === 0) return;
@@ -200,18 +136,14 @@
         updatePreview();
     }
 
-    /**
-     * Обновление превью при изменении настроек
-     */
+
     function updatePreviewOnChange() {
         $('input[name="pdf_lazy_loader_button_color"], input[name="pdf_lazy_loader_button_color_hover"], input[name="pdf_lazy_loader_loading_time"], input[name="pdf_lazy_loader_enable_download"]').on('change input', function() {
             updatePreview();
         });
     }
 
-    /**
-     * Обновить превью
-     */
+
     function updatePreview() {
         var $previewContainer = $('#pdf-lazy-loader-preview');
         if ($previewContainer.length === 0) return;
@@ -294,7 +226,6 @@
 
         $previewContainer.html(sampleHTML);
 
-        // Add preview button handlers
         var $viewBtn = $previewContainer.find('.pdf-view-button');
         if ($viewBtn.length) {
             $viewBtn.off('mouseenter mouseleave click').on('mouseenter', function() {
@@ -332,30 +263,23 @@
         }
     }
 
-    /**
-     * Автоматическое скрытие уведомлений через 5 секунд
-     * Исключаем системные уведомления WordPress (REST API, etc.)
-     */
+
     function autoHideNotifications() {
         $('.notice, .updated, .error').each(function() {
             var $notice = $(this);
             var noticeText = $notice.text().trim();
             
-            // Пропускаем системные уведомления WordPress (REST API, security warnings, etc.)
             if (noticeText.includes('REST API') || 
                 noticeText.includes('WordPress REST API') ||
                 noticeText.includes('network error') ||
                 noticeText.includes('security plugin') ||
                 noticeText.includes('web server configuration') ||
                 noticeText.includes('ad-blocker extension')) {
-                // Не скрываем системные уведомления
                 return;
             }
             
-            // Показываем уведомление с анимацией
             $notice.fadeIn();
             
-            // Автоматически скрываем через 5 секунд только наши уведомления
             setTimeout(function() {
                 $notice.fadeOut(300, function() {
                     $(this).remove();
@@ -364,28 +288,22 @@
         });
     }
 
-    /**
-     * Удаление дублирующихся уведомлений
-     * Исключаем системные уведомления WordPress
-     */
+
     function removeDuplicateNotifications() {
         var seenTexts = {};
         $('.notice, .updated, .error').each(function() {
             var $notice = $(this);
             var noticeText = $notice.text().trim();
             
-            // Пропускаем системные уведомления WordPress
             if (noticeText.includes('REST API') || 
                 noticeText.includes('WordPress REST API') ||
                 noticeText.includes('network error') ||
                 noticeText.includes('security plugin') ||
                 noticeText.includes('web server configuration') ||
                 noticeText.includes('ad-blocker extension')) {
-                // Не удаляем системные уведомления
                 return;
             }
             
-            // Если уведомление с таким текстом уже видели, удаляем дубликат
             if (seenTexts[noticeText]) {
                 $notice.remove();
             } else {
