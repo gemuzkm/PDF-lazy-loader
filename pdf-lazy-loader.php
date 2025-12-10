@@ -1,21 +1,43 @@
 <?php
+/**
+ * Plugin Name: PDF Lazy Loader
+ * Plugin URI: https://github.com/your-username/pdf-lazy-loader
+ * Description: Optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks. Includes URL encryption, Cloudflare Turnstile protection, and responsive design.
+ * Version: 1.0.6
+ * Author: Your TM
+ * Author URI: https://procarmanuals.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: pdf-lazy-loader
+ * Domain Path: /languages
+ * Requires at least: 5.0
+ * Tested up to: 6.4
+ * Requires PHP: 7.2
+ */
 
 if (!defined('ABSPATH')) {
     exit;
 }
+
 define('PDF_LAZY_LOADER_VERSION', '1.0.6');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
+
 add_action('admin_menu', 'pdf_lazy_loader_add_admin_menu');
 add_action('admin_init', 'pdf_lazy_loader_register_settings');
 add_action('admin_enqueue_scripts', 'pdf_lazy_loader_enqueue_admin_scripts');
 add_action('wp_enqueue_scripts', 'pdf_lazy_loader_enqueue_frontend_scripts');
-add_action('wp_head', 'pdf_lazy_loader_add_inline_script', 1); 
+add_action('wp_head', 'pdf_lazy_loader_add_inline_script', 1);
 add_filter('pre_update_option_pdf_lazy_loader_enable_download', 'pdf_lazy_loader_update_checkbox', 10, 2);
 add_filter('the_content', 'pdf_lazy_loader_filter_content', 999);
 add_filter('widget_text', 'pdf_lazy_loader_filter_content', 999);
 add_filter('widget_block_content', 'pdf_lazy_loader_filter_content', 999);
 add_filter('rest_prepare_post', 'pdf_lazy_loader_filter_rest_content', 999, 3);
+
+/**
+ * Add admin menu page for plugin settings
+ * Creates a submenu item under Settings → PDF Lazy Loader
+ */
 function pdf_lazy_loader_add_admin_menu() {
     add_options_page(
         'PDF Lazy Loader Settings',
@@ -25,6 +47,12 @@ function pdf_lazy_loader_add_admin_menu() {
         'pdf_lazy_loader_settings_page'
     );
 }
+
+/**
+ * Register all plugin settings with WordPress Settings API
+ * Registers settings for button colors, loading time, download option,
+ * responsive facade heights, Cloudflare Turnstile, and debug mode
+ */
 function pdf_lazy_loader_register_settings() {
     register_setting('pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color', array(
         'type' => 'string',
@@ -82,9 +110,27 @@ function pdf_lazy_loader_register_settings() {
         'default' => false
     ));
 }
+
+/**
+ * Sanitize checkbox value
+ * Converts various checkbox input formats to boolean
+ *
+ * @param mixed $value The checkbox value to sanitize
+ * @return bool True if value is '1', 1, or true, false otherwise
+ */
 function pdf_lazy_loader_sanitize_checkbox($value) {
     return $value === '1' || $value === 1 || $value === true;
 }
+
+/**
+ * Update checkbox option - handle unchecked state
+ * WordPress doesn't send unchecked checkboxes in POST, so we need to handle this
+ * This ensures unchecked checkboxes are properly saved as false
+ *
+ * @param mixed $value The new value being saved
+ * @param mixed $old_value The previous value
+ * @return bool The sanitized boolean value
+ */
 function pdf_lazy_loader_update_checkbox($value, $old_value) {
     $option_page = isset($_POST['option_page']) ? sanitize_text_field($_POST['option_page']) : '';
     $wpnonce = isset($_POST['_wpnonce']) ? sanitize_text_field($_POST['_wpnonce']) : '';
@@ -103,6 +149,24 @@ function pdf_lazy_loader_update_checkbox($value, $old_value) {
     }
     return (bool) $value;
 }
+
+/**
+ * Get all plugin settings with proper type conversion
+ * Retrieves settings from WordPress options and converts them to proper types
+ * (strings to booleans/integers as needed)
+ *
+ * @return array Associative array of all plugin settings:
+ *               - buttonColor: Hex color for View PDF button
+ *               - buttonColorHover: Hex color for button hover state
+ *               - loadingTime: Animation duration in milliseconds (500-5000)
+ *               - enableDownload: Whether download button is shown
+ *               - facadeHeightDesktop: Facade height for desktop (≥1024px), default 600px
+ *               - facadeHeightTablet: Facade height for tablet (768px-1023px), default 500px
+ *               - facadeHeightMobile: Facade height for mobile (<768px), default 400px
+ *               - enableTurnstile: Whether Cloudflare Turnstile is enabled
+ *               - turnstileSiteKey: Cloudflare Turnstile site key
+ *               - debugMode: Whether debug logging is enabled
+ */
 function pdf_lazy_loader_get_settings() {
     $enableDownload = get_option('pdf_lazy_loader_enable_download', false);
     if ($enableDownload === '1' || $enableDownload === 1 || $enableDownload === true) {
@@ -135,6 +199,13 @@ function pdf_lazy_loader_get_settings() {
         'debugMode' => $debugMode,
     );
 }
+
+/**
+ * Enqueue admin scripts and styles
+ * Only loads on the plugin's settings page to improve performance
+ *
+ * @param string $hook The current admin page hook
+ */
 function pdf_lazy_loader_enqueue_admin_scripts($hook) {
     if ($hook !== 'settings_page_pdf-lazy-loader-settings') {
         return;
@@ -159,6 +230,16 @@ function pdf_lazy_loader_enqueue_admin_scripts($hook) {
         $settings
     );
 }
+
+/**
+ * Encrypt URL using XOR cipher and base64 encoding
+ * Uses the same algorithm as JavaScript for compatibility
+ * Algorithm: XOR cipher with key 'pdf-lazy-loader-secure-key-2024', then Base64 encode
+ * This prevents PDF URLs from being visible in page source code
+ *
+ * @param string $url The URL to encrypt
+ * @return string Base64-encoded encrypted URL, or empty string if URL is empty
+ */
 function pdf_lazy_loader_encrypt_url($url) {
     if (empty($url)) {
         return '';
@@ -171,6 +252,14 @@ function pdf_lazy_loader_encrypt_url($url) {
     }
     return base64_encode($encrypted);
 }
+
+/**
+ * Check if URL is a PDF-related URL
+ * Detects various PDF indicators including file extensions, MIME types, and PDF viewer URLs
+ *
+ * @param string $url The URL to check
+ * @return bool True if URL appears to be PDF-related, false otherwise
+ */
 function pdf_lazy_loader_is_pdf_url($url) {
     if (empty($url)) {
         return false;
@@ -191,6 +280,23 @@ function pdf_lazy_loader_is_pdf_url($url) {
     }
     return false;
 }
+
+/**
+ * Filter content to remove PDF iframe src and encrypt it
+ * Server-side filtering that runs before HTML is sent to browser
+ * This is the first line of defense against scrapers - removes PDF URLs from source code
+ * Applied to: the_content, widget_text, widget_block_content filters
+ *
+ * Process:
+ * 1. Finds all iframe tags in content
+ * 2. Checks if src contains PDF indicators
+ * 3. Encrypts the src URL using XOR + Base64
+ * 4. Removes src attribute and stores encrypted URL in data-pdf-lazy-original-src-enc
+ * 5. Adds data-pdf-lazy-intercepted="1" marker
+ *
+ * @param string $content The content to filter
+ * @return string Filtered content with encrypted PDF iframe src attributes
+ */
 function pdf_lazy_loader_filter_content($content) {
     if (is_admin()) {
         return $content;
@@ -219,6 +325,17 @@ function pdf_lazy_loader_filter_content($content) {
     }, $content);
     return $content;
 }
+
+/**
+ * Filter REST API content
+ * Applies the same PDF URL encryption to REST API responses
+ * Ensures PDF URLs are encrypted even when content is accessed via REST API
+ *
+ * @param WP_REST_Response $response The REST API response object
+ * @param WP_Post $post The post object
+ * @param WP_REST_Request $request The REST API request object
+ * @return WP_REST_Response Modified response with encrypted PDF URLs
+ */
 function pdf_lazy_loader_filter_rest_content($response, $post, $request) {
     if (is_wp_error($response)) {
         return $response;
@@ -228,6 +345,20 @@ function pdf_lazy_loader_filter_rest_content($response, $post, $request) {
     }
     return $response;
 }
+
+/**
+ * Add inline script in head to prevent PDF loading immediately
+ * This must run before any iframes start loading (priority 1)
+ * Only runs on frontend, not in admin
+ *
+ * Client-side interception strategy:
+ * 1. Immediately intercepts existing PDF iframes before they load
+ * 2. Uses MutationObserver to catch dynamically added iframes
+ * 3. Removes src attribute and stores encrypted URL in data attribute
+ * 4. Multiple execution strategies ensure early interception
+ *
+ * This prevents network requests for PDF URLs before the main script processes them
+ */
 function pdf_lazy_loader_add_inline_script() {
     if (is_admin()) {
         return;
@@ -325,6 +456,14 @@ function pdf_lazy_loader_add_inline_script() {
     </script>
     <?php
 }
+
+/**
+ * Enqueue frontend scripts and styles
+ * Loads the main JavaScript file and CSS for PDF lazy loading functionality
+ * Only runs on frontend, not in admin
+ * Note: Cloudflare Turnstile script is loaded dynamically only when user clicks View/Download
+ * This improves page load performance and only loads Turnstile when needed
+ */
 function pdf_lazy_loader_enqueue_frontend_scripts() {
     if (is_admin()) {
         return;
@@ -349,6 +488,16 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
         $settings
     );
 }
+
+/**
+ * Render the plugin settings page
+ * Displays all configuration options in WordPress admin
+ * Includes sections for:
+ * - Basic settings (button colors, loading time, download option)
+ * - Responsive facade heights (desktop, tablet, mobile)
+ * - Cloudflare Turnstile protection
+ * - Debug mode
+ */
 function pdf_lazy_loader_settings_page() {
     if (!current_user_can('manage_options')) {
         wp_die(__('You do not have sufficient permissions to access this page.'));
@@ -595,6 +744,11 @@ function pdf_lazy_loader_settings_page() {
     </div>
     <?php
 }
+
+/**
+ * Add custom admin styles
+ * Styles the settings page for better UX
+ */
 add_action('admin_head', 'pdf_lazy_loader_admin_styles');
 function pdf_lazy_loader_admin_styles() {
     ?>
@@ -685,6 +839,12 @@ function pdf_lazy_loader_admin_styles() {
     </style>
     <?php
 }
+
+/**
+ * Plugin activation hook
+ * Sets default values for plugin options on activation
+ * Only sets defaults if options don't already exist
+ */
 register_activation_hook(__FILE__, 'pdf_lazy_loader_activation');
 function pdf_lazy_loader_activation() {
     if (!get_option('pdf_lazy_loader_button_color')) {
