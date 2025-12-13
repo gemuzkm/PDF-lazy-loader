@@ -23,6 +23,9 @@ define('PDF_LAZY_LOADER_VERSION', '1.0.6');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+// Global flag to track if PDF iframes are found on current page
+$GLOBALS['pdf_lazy_loader_has_pdfs'] = false;
+
 add_action('admin_menu', 'pdf_lazy_loader_add_admin_menu');
 add_action('admin_init', 'pdf_lazy_loader_register_settings');
 add_action('admin_enqueue_scripts', 'pdf_lazy_loader_enqueue_admin_scripts');
@@ -310,6 +313,9 @@ function pdf_lazy_loader_filter_content($content) {
         if (preg_match('/\ssrc\s*=\s*["\']([^"\']*?)["\']/i', $attributes, $src_match)) {
             $src = $src_match[1];
             if (pdf_lazy_loader_is_pdf_url($src)) {
+                // Set global flag to indicate PDF iframe found
+                $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                
                 $encrypted_src = pdf_lazy_loader_encrypt_url($src);
                 $new_attributes = preg_replace('/\ssrc\s*=\s*["\'][^"\']*?["\']/i', '', $attributes);
                 $new_attributes = trim($new_attributes);
@@ -347,9 +353,113 @@ function pdf_lazy_loader_filter_rest_content($response, $post, $request) {
 }
 
 /**
+ * Check if current page has PDF iframes
+ * Checks post content, widgets, and other potential sources for PDF iframes
+ * Also checks for already processed iframes with plugin attributes
+ * Also checks global flag set by content filter
+ * 
+ * @return bool True if PDF iframes are found, false otherwise
+ */
+function pdf_lazy_loader_has_pdf_iframes() {
+    if (is_admin()) {
+        return false;
+    }
+    
+    // Check global flag first (set by content filter if PDF iframes were found)
+    if (isset($GLOBALS['pdf_lazy_loader_has_pdfs']) && $GLOBALS['pdf_lazy_loader_has_pdfs']) {
+        return true;
+    }
+    
+    // Check current post/page content
+    if (is_singular() || is_home() || is_archive()) {
+        global $post;
+        if ($post && isset($post->post_content)) {
+            $content = $post->post_content;
+            
+            // Check for already processed iframes (with plugin attributes)
+            if (strpos($content, 'data-pdf-lazy-intercepted') !== false || 
+                strpos($content, 'data-pdf-lazy-original-src-enc') !== false) {
+                $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                return true;
+            }
+            
+            // Check for PDF-related classes or IDs (for dynamically loaded PDFs)
+            $pdf_classes = array('pdf-embedder', 'pdfembed', 'pdf-viewer', 'pdf-container', 'pdfemb-wrapper');
+            foreach ($pdf_classes as $class) {
+                if (strpos($content, $class) !== false) {
+                    $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                    return true;
+                }
+            }
+            
+            // Check if any iframe has PDF indicators in src
+            if (strpos($content, '<iframe') !== false) {
+                $pattern = '/<iframe[^>]*src\s*=\s*["\']([^"\']*?)["\']/is';
+                if (preg_match_all($pattern, $content, $matches)) {
+                    foreach ($matches[1] as $src) {
+                        if (pdf_lazy_loader_is_pdf_url($src)) {
+                            $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                            return true;
+                        }
+                    }
+                }
+                
+                // Also check data-src attribute
+                $pattern = '/<iframe[^>]*data-src\s*=\s*["\']([^"\']*?)["\']/is';
+                if (preg_match_all($pattern, $content, $matches)) {
+                    foreach ($matches[1] as $src) {
+                        if (pdf_lazy_loader_is_pdf_url($src)) {
+                            $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check widgets - use a more efficient approach
+    global $wp_registered_sidebars;
+    if (!empty($wp_registered_sidebars)) {
+        foreach ($wp_registered_sidebars as $sidebar_id => $sidebar) {
+            if (is_active_sidebar($sidebar_id)) {
+                ob_start();
+                dynamic_sidebar($sidebar_id);
+                $widget_content = ob_get_clean();
+                
+                if (!empty($widget_content)) {
+                    // Check for already processed iframes
+                    if (strpos($widget_content, 'data-pdf-lazy-intercepted') !== false || 
+                        strpos($widget_content, 'data-pdf-lazy-original-src-enc') !== false) {
+                        $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                        return true;
+                    }
+                    
+                    // Check for PDF indicators
+                    if (strpos($widget_content, '<iframe') !== false) {
+                        $pattern = '/<iframe[^>]*(?:src|data-src)\s*=\s*["\']([^"\']*?)["\']/is';
+                        if (preg_match_all($pattern, $widget_content, $matches)) {
+                            foreach ($matches[1] as $src) {
+                                if (pdf_lazy_loader_is_pdf_url($src)) {
+                                    $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
+/**
  * Add inline script in head to prevent PDF loading immediately
  * This must run before any iframes start loading (priority 1)
  * Only runs on frontend, not in admin
+ * Only loads if PDF iframes are detected on the page
  *
  * Client-side interception strategy:
  * 1. Immediately intercepts existing PDF iframes before they load
@@ -361,6 +471,11 @@ function pdf_lazy_loader_filter_rest_content($response, $post, $request) {
  */
 function pdf_lazy_loader_add_inline_script() {
     if (is_admin()) {
+        return;
+    }
+    
+    // Only load if PDF iframes are detected
+    if (!pdf_lazy_loader_has_pdf_iframes()) {
         return;
     }
     ?>
@@ -461,6 +576,7 @@ function pdf_lazy_loader_add_inline_script() {
  * Enqueue frontend scripts and styles
  * Loads the main JavaScript file and CSS for PDF lazy loading functionality
  * Only runs on frontend, not in admin
+ * Only loads if PDF iframes are detected on the page
  * Note: Cloudflare Turnstile script is loaded dynamically only when user clicks View/Download
  * This improves page load performance and only loads Turnstile when needed
  */
@@ -468,6 +584,12 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
     if (is_admin()) {
         return;
     }
+    
+    // Only load scripts if PDF iframes are detected
+    if (!pdf_lazy_loader_has_pdf_iframes()) {
+        return;
+    }
+    
     $settings = pdf_lazy_loader_get_settings();
     wp_enqueue_style(
         'pdf-lazy-loader',
