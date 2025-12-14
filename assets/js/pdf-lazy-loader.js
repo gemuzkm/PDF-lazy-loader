@@ -1,3 +1,5 @@
+
+
 (function() {
     'use strict';
 
@@ -44,7 +46,7 @@
     class PDFLazyLoader {
         constructor() {
             this.options = getOptions();
-            this.version = '1.0.7';
+            this.version = '1.0.6';
             this.processedIframes = new WeakSet(); // Track processed iframes
             this.encryptionKey = 'pdf-lazy-loader-secure-key-2024';
             
@@ -844,23 +846,29 @@
             this.debug('[PDF] Original src:', originalSrc);
             this.debug('[PDF] PDF URL:', pdfUrl);
             
-            // CRITICAL FIX: Load and wait for PDFEmbedder styles BEFORE showing iframe
+            // Load PDFEmbedder styles immediately when user clicks
             this.loadPDFEmbedderStyles().then(() => {
-                this.debug('[PDF] PDFEmbedder styles loaded successfully');
-                
-                // Now proceed with the actual PDF loading after animation
-                setTimeout(() => {
-                    this.restoreAndShowIframe(iframe, facade, pdfUrl, originalSrc, wrapper);
-                }, this.options.loadingTime);
+                this.debug('[PDF] PDFEmbedder styles loaded');
             }).catch((error) => {
-                this.debug('[PDF] Error loading PDFEmbedder styles (non-critical):', error);
-                // Still proceed even if styles fail to load (fullscreen just won't work)
-                setTimeout(() => {
-                    this.restoreAndShowIframe(iframe, facade, pdfUrl, originalSrc, wrapper);
-                }, this.options.loadingTime);
+                this.debug('[PDF] Error loading PDFEmbedder styles:', error);
             });
             
-            // Show loading spinner immediately
+            if (!originalSrc && !pdfUrl) {
+                this.debug('[PDF] ERROR: Both originalSrc and pdfUrl are empty!');
+                console.error('[PDF] Cannot load PDF: no valid URL provided');
+                return;
+            }
+            
+            if (!originalSrc) {
+                this.debug('[PDF] WARNING: originalSrc is empty, using pdfUrl');
+                originalSrc = pdfUrl;
+            }
+            
+            if (!pdfUrl) {
+                this.debug('[PDF] WARNING: pdfUrl is empty, using originalSrc');
+                pdfUrl = originalSrc;
+            }
+
             const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
             const subtitle = facade.querySelector('.pdf-facade-subtitle');
             const infoText = facade.querySelector('.pdf-facade-info');
@@ -928,121 +936,122 @@
             } else {
                 facade.appendChild(loadingSpinner);
             }
-        }
 
-        restoreAndShowIframe(iframe, facade, pdfUrl, originalSrc, wrapper) {
-            this.debug('[PDF] IFRAME SHOWN');
-            
-            const spinnerElement = facade.querySelector('.pdf-loading-spinner');
-            if (spinnerElement) {
-                spinnerElement.remove();
-            }
-            
-            const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
-            if (buttonsContainer) {
-                buttonsContainer.style.opacity = '1';
-            }
-            
-            if (!wrapper) {
-                wrapper = facade.closest('.pdf-facade-wrapper');
-            }
-            
-            let wrapperWidth = '';
-            let wrapperHeight = '';
-            if (wrapper) {
-                wrapperWidth = wrapper.getAttribute('data-iframe-width') || '';
-                wrapperHeight = wrapper.getAttribute('data-iframe-height') || '';
+            setTimeout(() => {
+                this.debug('[PDF] IFRAME SHOWN');
                 
-                if (!wrapperWidth || !wrapperHeight) {
-                    const wrapperComputedStyle = window.getComputedStyle(wrapper);
-                    wrapperWidth = wrapperWidth || wrapperComputedStyle.width || wrapper.style.width || '';
-                    wrapperHeight = wrapperHeight || wrapperComputedStyle.height || wrapper.style.height || '';
+                const spinnerElement = facade.querySelector('.pdf-loading-spinner');
+                if (spinnerElement) {
+                    spinnerElement.remove();
                 }
                 
-                this.debug('[PDF] Wrapper dimensions to preserve - width:', wrapperWidth, 'height:', wrapperHeight);
-            }
-            
-            const srcToRestore = originalSrc || pdfUrl;
-            this.debug('[PDF] Restoring iframe src:', srcToRestore);
-            
-            if (!srcToRestore || srcToRestore.trim() === '') {
-                this.debug('[PDF] ERROR: Cannot restore iframe - srcToRestore is empty!');
-                console.error('[PDF] Cannot restore iframe: empty URL');
-                return;
-            }
-            
-            iframe.setAttribute('src', srcToRestore);
-            
-            iframe.src = srcToRestore;
-            
-            if (wrapper) {
-                const wrapperParent = wrapper.parentNode;
-                const wrapperNextSibling = wrapper.nextSibling;
-                
-                const facadeInWrapper = wrapper.querySelector('.pdf-facade-container');
-                if (facadeInWrapper) {
-                    facadeInWrapper.remove();
+                const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
+                if (buttonsContainer) {
+                    buttonsContainer.style.opacity = '1';
                 }
                 
-                wrapper.remove();
+                if (!wrapper) {
+                    wrapper = facade.closest('.pdf-facade-wrapper');
+                }
                 
-                if (wrapperParent) {
-                    if (wrapperNextSibling) {
-                        wrapperParent.insertBefore(iframe, wrapperNextSibling);
-                    } else {
-                        wrapperParent.appendChild(iframe);
+                let wrapperWidth = '';
+                let wrapperHeight = '';
+                if (wrapper) {
+                    wrapperWidth = wrapper.getAttribute('data-iframe-width') || '';
+                    wrapperHeight = wrapper.getAttribute('data-iframe-height') || '';
+                    
+                    if (!wrapperWidth || !wrapperHeight) {
+                        const wrapperComputedStyle = window.getComputedStyle(wrapper);
+                        wrapperWidth = wrapperWidth || wrapperComputedStyle.width || wrapper.style.width || '';
+                        wrapperHeight = wrapperHeight || wrapperComputedStyle.height || wrapper.style.height || '';
+                    }
+                    
+                    this.debug('[PDF] Wrapper dimensions to preserve - width:', wrapperWidth, 'height:', wrapperHeight);
+                }
+                
+                const srcToRestore = originalSrc || pdfUrl;
+                this.debug('[PDF] Restoring iframe src:', srcToRestore);
+                
+                if (!srcToRestore || srcToRestore.trim() === '') {
+                    this.debug('[PDF] ERROR: Cannot restore iframe - srcToRestore is empty!');
+                    console.error('[PDF] Cannot restore iframe: empty URL');
+                    return;
+                }
+                
+                iframe.setAttribute('src', srcToRestore);
+                
+                iframe.src = srcToRestore;
+                
+                if (wrapper) {
+                    const wrapperParent = wrapper.parentNode;
+                    const wrapperNextSibling = wrapper.nextSibling;
+                    
+                    const facadeInWrapper = wrapper.querySelector('.pdf-facade-container');
+                    if (facadeInWrapper) {
+                        facadeInWrapper.remove();
+                    }
+                    
+                    wrapper.remove();
+                    
+                    if (wrapperParent) {
+                        if (wrapperNextSibling) {
+                            wrapperParent.insertBefore(iframe, wrapperNextSibling);
+                        } else {
+                            wrapperParent.appendChild(iframe);
+                        }
+                    }
+                } else {
+                    facade.remove();
+                }
+                
+                iframe.style.display = '';
+                iframe.style.visibility = '';
+                iframe.style.position = '';
+                iframe.style.opacity = '';
+                iframe.style.left = '';
+                iframe.style.top = '';
+                iframe.style.pointerEvents = '';
+                iframe.style.zIndex = '';
+                
+                if (wrapperWidth) {
+                    iframe.style.width = wrapperWidth;
+                    const widthValue = wrapperWidth.replace('px', '').replace('%', '');
+                    if (widthValue) {
+                        iframe.setAttribute('width', widthValue + (wrapperWidth.includes('%') ? '%' : ''));
                     }
                 }
-            } else {
-                facade.remove();
-            }
-            
-            iframe.style.display = '';
-            iframe.style.visibility = '';
-            iframe.style.position = '';
-            iframe.style.opacity = '';
-            iframe.style.left = '';
-            iframe.style.top = '';
-            iframe.style.pointerEvents = '';
-            iframe.style.zIndex = '';
-            
-            if (wrapperWidth) {
-                iframe.style.width = wrapperWidth;
-                const widthValue = wrapperWidth.replace('px', '').replace('%', '');
-                if (widthValue) {
-                    iframe.setAttribute('width', widthValue + (wrapperWidth.includes('%') ? '%' : ''));
+                if (wrapperHeight) {
+                    iframe.style.height = wrapperHeight;
+                    const heightValue = wrapperHeight.replace('px', '').replace('%', '');
+                    if (heightValue) {
+                        iframe.setAttribute('height', heightValue + (wrapperHeight.includes('%') ? '%' : ''));
+                    }
                 }
-            }
-            if (wrapperHeight) {
-                iframe.style.height = wrapperHeight;
-                const heightValue = wrapperHeight.replace('px', '').replace('%', '');
-                if (heightValue) {
-                    iframe.setAttribute('height', heightValue + (wrapperHeight.includes('%') ? '%' : ''));
+                
+                iframe.offsetHeight; // Trigger reflow
+                
+                iframe.removeAttribute('aria-hidden');
+                iframe.removeAttribute('tabindex');
+                
+                this.debug('[PDF] Iframe restored and visible');
+                this.debug('[PDF] Iframe dimensions - width:', iframe.style.width, 'height:', iframe.style.height);
+                this.debug('[PDF] Iframe offset dimensions - width:', iframe.offsetWidth, 'height:', iframe.offsetHeight);
+                
+                if (typeof jQuery !== 'undefined' && jQuery.fn.pdfEmbedder) {
+                    this.debug('[PDF] Reinitializing PDFEmbedder');
+                    try {
+                        jQuery(iframe).pdfEmbedder();
+                    } catch (e) {
+                        this.debug('[PDF] PDFEmbedder reinitialization failed:', e);
+                    }
                 }
-            }
-            
-            iframe.offsetHeight; // Trigger reflow
-            
-            iframe.removeAttribute('aria-hidden');
-            iframe.removeAttribute('tabindex');
-            
-            this.debug('[PDF] Iframe restored and visible');
-            this.debug('[PDF] Iframe dimensions - width:', iframe.style.width, 'height:', iframe.style.height);
-            this.debug('[PDF] Iframe offset dimensions - width:', iframe.offsetWidth, 'height:', iframe.offsetHeight);
-            
-            if (typeof jQuery !== 'undefined' && jQuery.fn.pdfEmbedder) {
-                this.debug('[PDF] Reinitializing PDFEmbedder');
-                try {
-                    jQuery(iframe).pdfEmbedder();
-                } catch (e) {
-                    this.debug('[PDF] PDFEmbedder reinitialization failed:', e);
+                
+                if (typeof window.dispatchEvent !== 'undefined') {
+                    window.dispatchEvent(new Event('resize'));
                 }
-            }
-            
-            if (typeof window.dispatchEvent !== 'undefined') {
-                window.dispatchEvent(new Event('resize'));
-            }
+            }, this.options.loadingTime);
         }
+
 
         loadTurnstileScript() {
             return new Promise((resolve, reject) => {
@@ -1082,6 +1091,7 @@
                 document.head.appendChild(script);
             });
         }
+
 
         initializeTurnstile(wrapper, facade) {
             return new Promise((resolve, reject) => {
@@ -1246,6 +1256,7 @@
             });
         }
 
+
         handleViewPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc) {
             if (this.options.enableTurnstile && this.options.turnstileSiteKey) {
                 let token = wrapper.getAttribute('data-turnstile-token');
@@ -1331,6 +1342,7 @@
             
             this.loadPDF(iframe, facade, storedPdfUrl, storedOriginalSrc, wrapper);
         }
+
 
         handleDownloadPDF(downloadButton) {
             const wrapper = downloadButton.closest('.pdf-facade-wrapper');
