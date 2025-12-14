@@ -739,119 +739,11 @@
             this.debug('[PDF] Facade created and should be visible');
         }
 
-        loadPDFEmbedderStyles() {
-            return new Promise((resolve) => {
-                // Check if styles are already loaded in DOM
-                const existingStyles = document.querySelectorAll('link[rel="stylesheet"][href*="PDFEmbedder"], link[rel="stylesheet"][href*="pdfembed"], link[rel="stylesheet"][href*="pdf-embedder"], link[rel="stylesheet"][href*="pdfemb-fullscreen"]');
-                if (existingStyles.length > 0) {
-                    this.debug('[PDF] PDFEmbedder styles already loaded in DOM:', existingStyles.length);
-                    resolve();
-                    return;
-                }
-                
-                // Get PDFEmbedder styles from localized data
-                let pdfEmbedderStyles = typeof pdfLazyLoaderPDFEmbedderStyles !== 'undefined' ? pdfLazyLoaderPDFEmbedderStyles : [];
-                
-                // If no styles from PHP, try to find them by common patterns
-                if (pdfEmbedderStyles.length === 0) {
-                    this.debug('[PDF] No PDFEmbedder styles from PHP, searching by patterns');
-                    const commonPaths = [
-                        '/wp-content/plugins/PDFEmbedder-premium/assets/css/pdfemb-fullscreen.min.css',
-                        '/wp-content/plugins/PDFEmbedder/assets/css/pdfemb-fullscreen.min.css',
-                        '/wp-content/plugins/pdf-embedder/assets/css/pdfemb-fullscreen.min.css'
-                    ];
-                    
-                    pdfEmbedderStyles = commonPaths.map(path => {
-                        const fullUrl = window.location.origin + path;
-                        return {
-                            handle: 'pdfemb-fullscreen-css',
-                            src: fullUrl,
-                            deps: [],
-                            ver: false
-                        };
-                    });
-                }
-                
-                if (pdfEmbedderStyles.length === 0) {
-                    this.debug('[PDF] No PDFEmbedder styles to load');
-                    resolve();
-                    return;
-                }
-                
-                this.debug('[PDF] Loading ' + pdfEmbedderStyles.length + ' PDFEmbedder style(s)');
-                
-                let loadedCount = 0;
-                let errorCount = 0;
-                const totalStyles = pdfEmbedderStyles.length;
-                
-                pdfEmbedderStyles.forEach((styleData) => {
-                    // Normalize URL
-                    let styleUrl = styleData.src;
-                    if (styleUrl.indexOf('http') !== 0) {
-                        styleUrl = window.location.origin + (styleUrl.indexOf('/') === 0 ? '' : '/') + styleUrl;
-                    }
-                    
-                    // Check if style is already loaded
-                    const existingLink = document.querySelector('link[href="' + styleUrl + '"], link[href*="' + styleUrl.split('/').pop() + '"]');
-                    if (existingLink) {
-                        this.debug('[PDF] Style already exists:', styleUrl);
-                        loadedCount++;
-                        if (loadedCount + errorCount === totalStyles) {
-                            resolve();
-                        }
-                        return;
-                    }
-                    
-                    const link = document.createElement('link');
-                    link.rel = 'stylesheet';
-                    link.type = 'text/css';
-                    link.href = styleUrl;
-                    if (styleData.ver) {
-                        link.href += (styleUrl.indexOf('?') !== -1 ? '&' : '?') + 'ver=' + styleData.ver;
-                    }
-                    
-                    link.onload = () => {
-                        this.debug('[PDF] PDFEmbedder style loaded:', styleUrl);
-                        loadedCount++;
-                        if (loadedCount + errorCount === totalStyles) {
-                            resolve();
-                        }
-                    };
-                    
-                    link.onerror = () => {
-                        this.debug('[PDF] Failed to load PDFEmbedder style (may not exist):', styleUrl);
-                        errorCount++;
-                        // Remove failed link
-                        if (link.parentNode) {
-                            link.parentNode.removeChild(link);
-                        }
-                        if (loadedCount + errorCount === totalStyles) {
-                            resolve();
-                        }
-                    };
-                    
-                    document.head.appendChild(link);
-                });
-                
-                // Resolve immediately if no styles to load
-                if (totalStyles === 0) {
-                    resolve();
-                }
-            });
-        }
-
         loadPDF(iframe, facade, pdfUrl, originalSrc, wrapper) {
             this.debug('[PDF] loadPDF called');
             this.debug('[PDF] Starting loading animation: ' + this.options.loadingTime + 'ms');
             this.debug('[PDF] Original src:', originalSrc);
             this.debug('[PDF] PDF URL:', pdfUrl);
-            
-            // Load PDFEmbedder styles immediately when user clicks
-            this.loadPDFEmbedderStyles().then(() => {
-                this.debug('[PDF] PDFEmbedder styles loaded');
-            }).catch((error) => {
-                this.debug('[PDF] Error loading PDFEmbedder styles:', error);
-            });
             
             if (!originalSrc && !pdfUrl) {
                 this.debug('[PDF] ERROR: Both originalSrc and pdfUrl are empty!');
