@@ -1,4 +1,3 @@
-
 (function() {
     'use strict';
 
@@ -38,16 +37,19 @@
             facadeHeightMobile: 400,
             enableTurnstile: false,
             turnstileSiteKey: '',
-            debugMode: false
+            debugMode: false,
+            pdfembAssets: { css: [], js: [] }
         };
     };
 
     class PDFLazyLoader {
         constructor() {
             this.options = getOptions();
-            this.version = '1.0.7';
+            this.version = '1.0.8';
             this.processedIframes = new WeakSet();
             this.encryptionKey = 'pdf-lazy-loader-secure-key-2024';
+            this._pdfembAssetsLoaded = false;
+            this._pdfembAssetsLoading = null; // Promise, prevents double injection
 
             this.debug = (...args) => {
                 if (this.options.debugMode) {
@@ -60,7 +62,7 @@
             this.init();
         }
 
-        // XOR + Base64 — must match pdf_lazy_loader_encrypt_url() in php and the inline head script
+        // XOR + Base64 — must match pdf_lazy_loader_encrypt_url() in PHP and the inline head script
         encryptURL(url) {
             if (!url) return '';
             try {
@@ -93,6 +95,72 @@
             }
         }
 
+        // -----------------------------------------------------------------------
+        // On-demand PDF Embedder asset loader
+        // Injects dequeued CSS + JS only when the user clicks "View PDF".
+        // All subsequent clicks reuse the same Promise (assets loaded once).
+        // -----------------------------------------------------------------------
+        loadPDFEmbedderAssets() {
+            if (this._pdfembAssetsLoaded) {
+                return Promise.resolve();
+            }
+            if (this._pdfembAssetsLoading) {
+                return this._pdfembAssetsLoading;
+            }
+
+            const assets = (this.options.pdfembAssets) || { css: [], js: [] };
+            const cssUrls = Array.isArray(assets.css) ? assets.css : [];
+            const jsUrls  = Array.isArray(assets.js)  ? assets.js  : [];
+
+            if (cssUrls.length === 0 && jsUrls.length === 0) {
+                this._pdfembAssetsLoaded = true;
+                return Promise.resolve();
+            }
+
+            this.debug('loadPDFEmbedderAssets: injecting', cssUrls.length, 'CSS,', jsUrls.length, 'JS');
+
+            this._pdfembAssetsLoading = new Promise((resolve) => {
+                // 1. Inject all CSS (non-blocking)
+                cssUrls.forEach(href => {
+                    if (!href || document.querySelector('link[href*="' + CSS.escape(href.split('?')[0].split('/').pop()) + '"]')) return;
+                    const link = document.createElement('link');
+                    link.rel  = 'stylesheet';
+                    link.type = 'text/css';
+                    link.href = href;
+                    document.head.appendChild(link);
+                    this.debug('loadPDFEmbedderAssets: injected CSS', href);
+                });
+
+                // 2. Inject JS sequentially (order matters for PDF.js worker → viewer)
+                const loadScript = (urls, index) => {
+                    if (index >= urls.length) {
+                        this._pdfembAssetsLoaded = true;
+                        this._pdfembAssetsLoading = null;
+                        this.debug('loadPDFEmbedderAssets: all JS loaded');
+                        resolve();
+                        return;
+                    }
+                    const src = urls[index];
+                    // Skip if already loaded
+                    if (!src || document.querySelector('script[src*="' + src.split('?')[0].split('/').pop() + '"]')) {
+                        this.debug('loadPDFEmbedderAssets: JS already present, skipping', src);
+                        loadScript(urls, index + 1);
+                        return;
+                    }
+                    const script   = document.createElement('script');
+                    script.src     = src;
+                    script.async   = false; // preserve load order
+                    script.onload  = () => { this.debug('loadPDFEmbedderAssets: JS loaded', src); loadScript(urls, index + 1); };
+                    script.onerror = () => { this.debug('loadPDFEmbedderAssets: JS failed', src); loadScript(urls, index + 1); };
+                    document.head.appendChild(script);
+                };
+
+                loadScript(jsUrls, 0);
+            });
+
+            return this._pdfembAssetsLoading;
+        }
+
         init() {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
@@ -103,12 +171,9 @@
                 this.processPDFs();
                 this.setupMutationObserver();
             }
-            // No redundant setTimeout calls — WeakSet prevents double-processing
-            // and MutationObserver handles dynamically injected iframes
         }
 
         isPDFIframe(iframe) {
-            // Skip if already wrapped
             if (
                 iframe.parentElement &&
                 (iframe.parentElement.querySelector('.pdf-lazy-loader-wrapper') ||
@@ -117,8 +182,8 @@
                 return false;
             }
 
-            const src      = iframe.getAttribute('src')      || '';
-            const dataSrc  = iframe.getAttribute('data-src') || '';
+            const src       = iframe.getAttribute('src')      || '';
+            const dataSrc   = iframe.getAttribute('data-src') || '';
             const className = iframe.className || '';
             const id        = iframe.id || '';
 
@@ -155,41 +220,28 @@
 
             if (encryptedSrc) {
                 pdfUrl = this.decryptURL(encryptedSrc);
-                if (!pdfUrl) {
-                    this.debug('extractPDFUrl: decryptURL returned empty, src:', encryptedSrc);
-                }
+                if (!pdfUrl) this.debug('extractPDFUrl: decryptURL returned empty, src:', encryptedSrc);
             } else {
                 pdfUrl = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
             }
 
-            // PDF Embedder Premium: extract real URL from pdfemb-data query param
             if (pdfUrl.includes('pdfemb-data')) {
                 try {
                     const url        = new URL(pdfUrl, window.location.href);
                     const pdfembData = url.searchParams.get('pdfemb-data');
                     if (pdfembData) {
                         const data = JSON.parse(atob(pdfembData));
-                        if (data.url) {
-                            pdfUrl = data.url;
-                            this.debug('extractPDFUrl: extracted from pdfemb-data:', pdfUrl);
-                        }
+                        if (data.url) { pdfUrl = data.url; this.debug('extractPDFUrl: extracted from pdfemb-data:', pdfUrl); }
                     }
-                } catch (e) {
-                    this.debug('extractPDFUrl: could not parse pdfemb-data:', e);
-                }
+                } catch (e) { this.debug('extractPDFUrl: could not parse pdfemb-data:', e); }
             }
 
-            // PDF.js viewer: extract from ?file= param
             if (pdfUrl.includes('viewer.html') || pdfUrl.includes('pdfjs')) {
                 try {
                     const url  = new URL(pdfUrl, window.location.href);
-                    const file = url.searchParams.get('file') ||
-                                 url.searchParams.get('url')  ||
-                                 url.searchParams.get('src');
+                    const file = url.searchParams.get('file') || url.searchParams.get('url') || url.searchParams.get('src');
                     if (file) pdfUrl = decodeURIComponent(file);
-                } catch (e) {
-                    this.debug('extractPDFUrl: could not parse PDF.js viewer URL:', e);
-                }
+                } catch (e) { this.debug('extractPDFUrl: could not parse PDF.js viewer URL:', e); }
             }
 
             if (!pdfUrl || pdfUrl.includes('pdfemb-data')) {
@@ -242,25 +294,20 @@
         processIframe(iframe) {
             this.processedIframes.add(iframe);
 
-            // Resolve original src
             let originalSrc = '';
             const encryptedSrc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
             if (encryptedSrc) {
                 originalSrc = this.decryptURL(encryptedSrc);
-                if (originalSrc) {
-                    // Re-encrypt with canonical algorithm to ensure consistency
-                    iframe.setAttribute('data-pdf-lazy-original-src-enc', this.encryptURL(originalSrc));
-                }
+                if (originalSrc) iframe.setAttribute('data-pdf-lazy-original-src-enc', this.encryptURL(originalSrc));
             } else {
                 originalSrc = iframe.getAttribute('src') || '';
             }
 
             iframe.removeAttribute('data-pdf-lazy-intercepted');
 
-            // Capture dimensions before hiding
-            const computedStyle  = window.getComputedStyle(iframe);
-            const offsetWidth    = iframe.offsetWidth;
-            const offsetHeight   = iframe.offsetHeight;
+            const computedStyle = window.getComputedStyle(iframe);
+            const offsetWidth   = iframe.offsetWidth;
+            const offsetHeight  = iframe.offsetHeight;
 
             let width  = offsetWidth  > 10 ? offsetWidth  + 'px' : (computedStyle.width  || '');
             let height = offsetHeight > 10 ? offsetHeight + 'px' : (computedStyle.height || '');
@@ -269,11 +316,8 @@
                 const pw = iframe.parentElement ? iframe.parentElement.offsetWidth : 0;
                 width = pw > 0 ? pw + 'px' : '100%';
             }
-            if (!height || height === 'auto' || height === '0px' || height === '1px') {
-                height = '600px';
-            }
+            if (!height || height === 'auto' || height === '0px' || height === '1px') height = '600px';
 
-            // Normalize units
             const addPx = v => (!v.includes('%') && !v.includes('px') && !v.includes('em') && !v.includes('rem'))
                 ? (parseFloat(v) || 0) + 'px' : v;
             width  = addPx(width);
@@ -281,37 +325,25 @@
 
             this.debug('processIframe: dimensions width:', width, 'height:', height);
 
-            const pdfUrl     = this.extractPDFUrl(iframe);
+            const pdfUrl      = this.extractPDFUrl(iframe);
             const finalPdfUrl = (pdfUrl && pdfUrl !== originalSrc && !pdfUrl.includes('pdfemb-data'))
                 ? pdfUrl : originalSrc;
 
-            if (!finalPdfUrl) {
-                this.debug('processIframe: no valid PDF URL, skipping');
-                return;
-            }
+            if (!finalPdfUrl) { this.debug('processIframe: no valid PDF URL, skipping'); return; }
 
-            // Hide original iframe completely
             iframe.removeAttribute('src');
             Object.assign(iframe.style, {
-                display:       'none',
-                visibility:    'hidden',
-                position:      'absolute',
-                left:          '-9999px',
-                top:           '-9999px',
-                width:         '1px',
-                height:        '1px',
-                opacity:       '0',
-                pointerEvents: 'none',
-                zIndex:        '-1',
+                display: 'none', visibility: 'hidden', position: 'absolute',
+                left: '-9999px', top: '-9999px', width: '1px', height: '1px',
+                opacity: '0', pointerEvents: 'none', zIndex: '-1',
             });
             iframe.setAttribute('aria-hidden', 'true');
             iframe.setAttribute('tabindex', '-1');
 
-            // Build facade wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'pdf-facade-wrapper pdf-lazy-loader-wrapper';
-            wrapper.setAttribute('data-pdf-url-enc',       this.encryptURL(finalPdfUrl));
-            wrapper.setAttribute('data-original-src-enc',  this.encryptURL(originalSrc));
+            wrapper.setAttribute('data-pdf-url-enc',      this.encryptURL(finalPdfUrl));
+            wrapper.setAttribute('data-original-src-enc', this.encryptURL(originalSrc));
             wrapper.setAttribute('data-iframe-width',  width);
             wrapper.setAttribute('data-iframe-height', height);
             wrapper.style.cssText = `width:${width};margin:0 auto 20px;position:relative;display:block;`;
@@ -341,7 +373,6 @@
                 facade.style.minHeight = h;
             });
 
-            // Icon
             const icon = document.createElement('div');
             icon.style.cssText = `width:80px;height:80px;background:${this.options.buttonColor};
                 border-radius:8px;display:flex;align-items:center;justify-content:center;
@@ -370,12 +401,12 @@
                 cursor:pointer;transition:all .3s;display:inline-flex;align-items:center;
                 box-shadow:0 2px 4px rgba(0,0,0,.1);`;
             viewBtn.addEventListener('mouseenter', () => {
-                viewBtn.style.background  = this.options.buttonColorHover;
-                viewBtn.style.transform   = 'translateY(-2px)';
+                viewBtn.style.background = this.options.buttonColorHover;
+                viewBtn.style.transform  = 'translateY(-2px)';
             });
             viewBtn.addEventListener('mouseleave', () => {
-                viewBtn.style.background  = this.options.buttonColor;
-                viewBtn.style.transform   = 'translateY(0)';
+                viewBtn.style.background = this.options.buttonColor;
+                viewBtn.style.transform  = 'translateY(0)';
             });
             viewBtn.addEventListener('click', () => {
                 this.handleViewPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc);
@@ -427,7 +458,6 @@
             originalSrc = originalSrc || pdfUrl;
             pdfUrl      = pdfUrl      || originalSrc;
 
-            // Hide buttons and show spinner
             const btnsContainer = facade.querySelector('.pdf-facade-buttons');
             const subtitle      = facade.querySelector('.pdf-facade-subtitle');
             const infoText      = facade.querySelector('.pdf-facade-info');
@@ -468,7 +498,6 @@
                 iframe.setAttribute('src', srcToRestore);
                 iframe.src = srcToRestore;
 
-                // Remove facade and re-insert iframe in place
                 if (wrapper) {
                     const parent      = wrapper.parentNode;
                     const nextSibling = wrapper.nextSibling;
@@ -481,7 +510,6 @@
                     facade.remove();
                 }
 
-                // Restore iframe styles
                 const resetStyles = ['display','visibility','position','opacity','left','top','pointerEvents','zIndex','width','height'];
                 resetStyles.forEach(p => { iframe.style[p] = ''; });
                 if (storedWidth)  iframe.style.width  = storedWidth;
@@ -489,7 +517,7 @@
 
                 iframe.removeAttribute('aria-hidden');
                 iframe.removeAttribute('tabindex');
-                iframe.offsetHeight; // reflow
+                iframe.offsetHeight;
 
                 if (typeof window.dispatchEvent !== 'undefined') {
                     window.dispatchEvent(new Event('resize'));
@@ -511,11 +539,11 @@
                     return;
                 }
 
-                const script  = document.createElement('script');
-                script.src    = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-                script.async  = true;
-                script.defer  = true;
-                script.onload = () => { this.debug('Turnstile script loaded'); resolve(); };
+                const script   = document.createElement('script');
+                script.src     = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+                script.async   = true;
+                script.defer   = true;
+                script.onload  = () => { this.debug('Turnstile script loaded'); resolve(); };
                 script.onerror = () => reject(new Error('Failed to load Turnstile script'));
                 document.head.appendChild(script);
             });
@@ -526,14 +554,14 @@
                 const content = facade.querySelector('.pdf-facade-content');
                 if (!content) { reject(new Error('Facade content not found')); return; }
 
-                let containerId      = wrapper.getAttribute('data-turnstile-container-id');
+                let containerId       = wrapper.getAttribute('data-turnstile-container-id');
                 let turnstileContainer = containerId ? document.getElementById(containerId) : null;
 
                 if (!turnstileContainer) {
-                    turnstileContainer    = document.createElement('div');
+                    turnstileContainer       = document.createElement('div');
                     turnstileContainer.className = 'pdf-turnstile-container';
-                    containerId           = 'pdf-turnstile-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-                    turnstileContainer.id = containerId;
+                    containerId              = 'pdf-turnstile-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                    turnstileContainer.id    = containerId;
                     turnstileContainer.style.cssText = 'margin:20px 0;display:flex;flex-direction:column;align-items:center;min-height:65px;';
                     const btns = content.querySelector('.pdf-facade-buttons');
                     if (btns && btns.nextSibling) content.insertBefore(turnstileContainer, btns.nextSibling);
@@ -543,15 +571,15 @@
 
                 const btns     = facade.querySelector('.pdf-facade-buttons');
                 const infoText = facade.querySelector('.pdf-facade-info');
-                if (btns)     btns.style.display     = 'none';
-                if (infoText) infoText.style.display  = 'none';
+                if (btns)     btns.style.display    = 'none';
+                if (infoText) infoText.style.display = 'none';
 
                 let msgEl = turnstileContainer.querySelector('.pdf-turnstile-message');
                 if (!msgEl) {
-                    msgEl           = document.createElement('p');
-                    msgEl.className = 'pdf-turnstile-message';
+                    msgEl             = document.createElement('p');
+                    msgEl.className   = 'pdf-turnstile-message';
                     msgEl.style.cssText = 'margin:0 0 15px;color:#666;font-size:14px;text-align:center;';
-                    msgEl.textContent   = 'Please complete verification to continue';
+                    msgEl.textContent = 'Please complete verification to continue';
                     turnstileContainer.insertBefore(msgEl, turnstileContainer.firstChild);
                 }
 
@@ -566,7 +594,6 @@
                         return;
                     }
 
-                    // Re-use existing valid token
                     const existingId = wrapper.getAttribute('data-turnstile-widget-id');
                     if (existingId) {
                         try {
@@ -586,8 +613,8 @@
                                 if (msgEl)   msgEl.remove();
                                 turnstileContainer.remove();
                                 wrapper.removeAttribute('data-turnstile-container-id');
-                                if (btns)     btns.style.display     = '';
-                                if (infoText) infoText.style.display  = '';
+                                if (btns)     btns.style.display    = '';
+                                if (infoText) infoText.style.display = '';
                                 resolve(token);
                             },
                             'error-callback': () => {
@@ -618,9 +645,7 @@
         handleViewPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc) {
             if (this.options.enableTurnstile && this.options.turnstileSiteKey) {
                 const token = wrapper.getAttribute('data-turnstile-token');
-                if (token) {
-                    this.debug('Turnstile token present, loading PDF');
-                } else {
+                if (!token) {
                     this.loadTurnstileScript()
                         .then(() => this.initializeTurnstile(wrapper, facade))
                         .then(() => this._doLoadPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc))
@@ -632,13 +657,16 @@
         }
 
         _doLoadPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc) {
-            let storedPdfUrl    = finalPdfUrl;
-            let storedOrigSrc   = originalSrc;
+            let storedPdfUrl  = finalPdfUrl;
+            let storedOrigSrc = originalSrc;
             const encPdf = wrapper.getAttribute('data-pdf-url-enc');
             const encSrc = wrapper.getAttribute('data-original-src-enc');
             if (encPdf) storedPdfUrl  = this.decryptURL(encPdf)  || finalPdfUrl;
             if (encSrc) storedOrigSrc = this.decryptURL(encSrc)  || originalSrc;
-            this.loadPDF(iframe, facade, storedPdfUrl, storedOrigSrc, wrapper);
+
+            // Load dequeued PDF Embedder assets on first click, then show PDF
+            this.loadPDFEmbedderAssets()
+                .then(() => this.loadPDF(iframe, facade, storedPdfUrl, storedOrigSrc, wrapper));
         }
 
         handleDownloadPDF(dlBtn) {
@@ -651,7 +679,7 @@
                 const enc = dlBtn.getAttribute('data-pdf-url-enc');
                 if (!enc) return;
                 const url = this.decryptURL(enc);
-                if (!url)  return;
+                if (!url) return;
                 const a = document.createElement('a');
                 a.href = url; a.download = ''; a.style.display = 'none';
                 document.body.appendChild(a);
