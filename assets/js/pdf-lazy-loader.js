@@ -1,5 +1,4 @@
 
-
 (function() {
     'use strict';
 
@@ -46,22 +45,22 @@
     class PDFLazyLoader {
         constructor() {
             this.options = getOptions();
-            this.version = '1.0.6';
-            this.processedIframes = new WeakSet(); // Track processed iframes
+            this.version = '1.0.7';
+            this.processedIframes = new WeakSet();
             this.encryptionKey = 'pdf-lazy-loader-secure-key-2024';
-            
+
             this.debug = (...args) => {
                 if (this.options.debugMode) {
                     console.log('[PDF]', ...args);
                 }
             };
-            
+
             this.debug('Initializing v' + this.version);
             this.debug('Options:', this.options);
             this.init();
         }
 
-
+        // XOR + Base64 — must match pdf_lazy_loader_encrypt_url() in php and the inline head script
         encryptURL(url) {
             if (!url) return '';
             try {
@@ -72,46 +71,24 @@
                 }
                 return btoa(encrypted);
             } catch (e) {
-                if (this.options.debugMode) {
-                    console.error('[PDF] Encryption error:', e);
-                }
+                if (this.options.debugMode) console.error('[PDF] Encryption error:', e);
                 return '';
             }
         }
 
-
         decryptURL(encrypted) {
-            if (!encrypted) {
-                this.debug('[PDF] decryptURL: empty encrypted string');
-                return '';
-            }
-            
+            if (!encrypted) return '';
             try {
                 const decoded = atob(encrypted);
-                
-                if (!decoded || decoded.length === 0) {
-                    this.debug('[PDF] decryptURL: base64 decode returned empty');
-                    return '';
-                }
-                
                 let decrypted = '';
                 for (let i = 0; i < decoded.length; i++) {
                     const keyChar = this.encryptionKey[i % this.encryptionKey.length];
                     decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ keyChar.charCodeAt(0));
                 }
-                
-                if (!decrypted || decrypted.length === 0) {
-                    this.debug('[PDF] decryptURL: XOR decryption returned empty');
-                    return '';
-                }
-                
-                this.debug('[PDF] decryptURL: successfully decrypted, length:', decrypted.length);
+                this.debug('decryptURL: ok, length:', decrypted.length);
                 return decrypted;
             } catch (e) {
-                this.debug('[PDF] Decryption error:', e);
-                if (this.options.debugMode) {
-                    console.error('[PDF] Decryption error details:', e, 'encrypted length:', encrypted.length);
-                }
+                this.debug('decryptURL error:', e);
                 return '';
             }
         }
@@ -126,1190 +103,577 @@
                 this.processPDFs();
                 this.setupMutationObserver();
             }
-
-            setTimeout(() => this.processPDFs(), 500);
-            setTimeout(() => this.processPDFs(), 1500);
+            // No redundant setTimeout calls — WeakSet prevents double-processing
+            // and MutationObserver handles dynamically injected iframes
         }
 
-
         isPDFIframe(iframe) {
-            if (iframe.parentElement && 
-                (iframe.parentElement.querySelector('.pdf-lazy-loader-wrapper') || 
-                 iframe.nextElementSibling?.classList?.contains('pdf-lazy-loader-wrapper'))) {
+            // Skip if already wrapped
+            if (
+                iframe.parentElement &&
+                (iframe.parentElement.querySelector('.pdf-lazy-loader-wrapper') ||
+                 iframe.nextElementSibling?.classList?.contains('pdf-lazy-loader-wrapper'))
+            ) {
                 return false;
             }
 
-            const src = iframe.getAttribute('src') || '';
-            const dataSrc = iframe.getAttribute('data-src') || '';
+            const src      = iframe.getAttribute('src')      || '';
+            const dataSrc  = iframe.getAttribute('data-src') || '';
             const className = iframe.className || '';
-            const id = iframe.id || '';
+            const id        = iframe.id || '';
 
-            const pdfIndicators = [
-                '.pdf',
-                'application/pdf',
-                'pdf-embedder',
-                'pdfembed',
-                'pdfjs',
-                'viewer.html',
-                'pdf-viewer',
-                'pdfemb-data' // PDFEmbedder parameter
+            const indicators = [
+                '.pdf', 'application/pdf', 'pdf-embedder', 'pdfembed',
+                'pdfjs', 'viewer.html', 'pdf-viewer', 'pdfemb-data'
             ];
 
-            const srcToCheck = src || dataSrc;
-            const lowerSrc = srcToCheck.toLowerCase();
-
-            for (const indicator of pdfIndicators) {
-                if (lowerSrc.includes(indicator)) {
-                    return true;
-                }
+            const lowerSrc = (src || dataSrc).toLowerCase();
+            for (const ind of indicators) {
+                if (lowerSrc.includes(ind)) return true;
             }
 
-            const pdfClasses = [
-                'pdf-embedder',
-                'pdfembed',
-                'pdf-viewer',
-                'pdf-container',
-                'pdfemb-wrapper'
-            ];
-
-            for (const pdfClass of pdfClasses) {
-                if (className.toLowerCase().includes(pdfClass) || id.toLowerCase().includes(pdfClass)) {
-                    return true;
-                }
+            const pdfClasses = ['pdf-embedder','pdfembed','pdf-viewer','pdf-container','pdfemb-wrapper'];
+            for (const cls of pdfClasses) {
+                if (className.toLowerCase().includes(cls) || id.toLowerCase().includes(cls)) return true;
             }
 
             const parent = iframe.parentElement;
             if (parent) {
-                const parentClass = parent.className || '';
-                const parentId = parent.id || '';
-                for (const pdfClass of pdfClasses) {
-                    if (parentClass.toLowerCase().includes(pdfClass) || parentId.toLowerCase().includes(pdfClass)) {
-                        return true;
-                    }
+                const pc = (parent.className || '').toLowerCase();
+                const pi = (parent.id || '').toLowerCase();
+                for (const cls of pdfClasses) {
+                    if (pc.includes(cls) || pi.includes(cls)) return true;
                 }
             }
 
             return false;
         }
 
-
         extractPDFUrl(iframe) {
             let pdfUrl = '';
             const encryptedSrc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
+
             if (encryptedSrc) {
-                try {
-                    pdfUrl = this.decryptURL(encryptedSrc);
-                    if (!pdfUrl || pdfUrl.length === 0) {
-                        throw new Error('Decryption returned empty');
-                    }
-                    this.debug('[PDF] Successfully decrypted URL from data-pdf-lazy-original-src-enc');
-                } catch (e) {
-                    this.debug('[PDF] XOR decryption failed, trying base64 fallback:', e);
-                    try {
-                        pdfUrl = decodeURIComponent(escape(atob(encryptedSrc)));
-                        this.debug('[PDF] Base64 decode successful');
-                    } catch (e2) {
-                        try {
-                            pdfUrl = atob(encryptedSrc);
-                            this.debug('[PDF] Simple base64 decode successful');
-                        } catch (e3) {
-                            this.debug('[PDF] All decryption methods failed:', e3);
-                            pdfUrl = '';
-                        }
-                    }
+                pdfUrl = this.decryptURL(encryptedSrc);
+                if (!pdfUrl) {
+                    this.debug('extractPDFUrl: decryptURL returned empty, src:', encryptedSrc);
                 }
             } else {
-                pdfUrl = iframe.getAttribute('src') || 
-                        iframe.getAttribute('data-src') || 
-                        '';
+                pdfUrl = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
             }
 
+            // PDF Embedder Premium: extract real URL from pdfemb-data query param
             if (pdfUrl.includes('pdfemb-data')) {
                 try {
-                    const url = new URL(pdfUrl, window.location.href);
+                    const url        = new URL(pdfUrl, window.location.href);
                     const pdfembData = url.searchParams.get('pdfemb-data');
                     if (pdfembData) {
-                        const decoded = atob(pdfembData);
-                        const data = JSON.parse(decoded);
+                        const data = JSON.parse(atob(pdfembData));
                         if (data.url) {
                             pdfUrl = data.url;
-                            this.debug('[PDF] Extracted PDF URL from pdfemb-data:', pdfUrl);
-                        } else {
-                            this.debug('[PDF] pdfemb-data decoded but no URL found:', data);
+                            this.debug('extractPDFUrl: extracted from pdfemb-data:', pdfUrl);
                         }
                     }
                 } catch (e) {
-                    this.debug('[PDF] Could not parse pdfemb-data:', e);
+                    this.debug('extractPDFUrl: could not parse pdfemb-data:', e);
                 }
             }
 
+            // PDF.js viewer: extract from ?file= param
             if (pdfUrl.includes('viewer.html') || pdfUrl.includes('pdfjs')) {
                 try {
-                    const url = new URL(pdfUrl, window.location.href);
-                    const fileParam = url.searchParams.get('file') || 
-                                    url.searchParams.get('url') ||
-                                    url.searchParams.get('src');
-                    if (fileParam) {
-                        pdfUrl = decodeURIComponent(fileParam);
-                    }
+                    const url  = new URL(pdfUrl, window.location.href);
+                    const file = url.searchParams.get('file') ||
+                                 url.searchParams.get('url')  ||
+                                 url.searchParams.get('src');
+                    if (file) pdfUrl = decodeURIComponent(file);
                 } catch (e) {
-                    this.debug('[PDF] Could not parse PDF URL from viewer:', e);
+                    this.debug('extractPDFUrl: could not parse PDF.js viewer URL:', e);
                 }
             }
 
             if (!pdfUrl || pdfUrl.includes('pdfemb-data')) {
-                pdfUrl = iframe.getAttribute('data-pdf-url') || 
-                        iframe.getAttribute('data-url') ||
-                        iframe.getAttribute('data-pdfemb-url') ||
-                        '';
+                pdfUrl = iframe.getAttribute('data-pdf-url')   ||
+                         iframe.getAttribute('data-url')        ||
+                         iframe.getAttribute('data-pdfemb-url') || '';
             }
 
             return pdfUrl;
         }
 
         processPDFs() {
-            this.debug('[PDF] Finding PDF iframes...');
-            
+            this.debug('processPDFs: scanning iframes...');
             const allIframes = document.querySelectorAll('iframe');
-            this.debug('[PDF] Found ' + allIframes.length + ' total iframe(s)');
+            this.debug('processPDFs: total iframes found:', allIframes.length);
 
-            let pdfIframes = [];
-
-            allIframes.forEach((iframe) => {
-                if (this.processedIframes.has(iframe)) {
-                    return;
-                }
-
-                if (this.isPDFIframe(iframe)) {
+            const pdfIframes = [];
+            allIframes.forEach(iframe => {
+                if (!this.processedIframes.has(iframe) && this.isPDFIframe(iframe)) {
                     pdfIframes.push(iframe);
                 }
             });
 
-            this.debug('[PDF] Found ' + pdfIframes.length + ' PDF iframe(s)');
-
-            pdfIframes.forEach((iframe, index) => {
-                this.debug('[PDF] Processing PDF iframe ' + (index + 1) + '...');
+            this.debug('processPDFs: PDF iframes to process:', pdfIframes.length);
+            pdfIframes.forEach((iframe, idx) => {
+                this.debug('processPDFs: processing iframe', idx + 1);
                 this.processIframe(iframe);
             });
         }
 
-
         setupMutationObserver() {
-            const observer = new MutationObserver((mutations) => {
+            const observer = new MutationObserver(mutations => {
                 let shouldProcess = false;
-
-                mutations.forEach((mutation) => {
-                    mutation.addedNodes.forEach((node) => {
-                        if (node.nodeType === 1) { // Element node
-                            if (node.tagName === 'IFRAME') {
-                                shouldProcess = true;
-                            }
-                            if (node.querySelectorAll && node.querySelectorAll('iframe').length > 0) {
-                                shouldProcess = true;
-                            }
-                        }
+                mutations.forEach(mutation => {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType !== 1) return;
+                        if (node.tagName === 'IFRAME') shouldProcess = true;
+                        if (node.querySelectorAll && node.querySelectorAll('iframe').length > 0) shouldProcess = true;
                     });
                 });
-
                 if (shouldProcess) {
-                    this.debug('[PDF] New iframes detected, processing...');
+                    this.debug('MutationObserver: new iframes detected');
                     setTimeout(() => this.processPDFs(), 100);
                 }
             });
-
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-
-            this.debug('[PDF] MutationObserver setup complete');
+            observer.observe(document.body, { childList: true, subtree: true });
+            this.debug('MutationObserver: ready');
         }
 
         processIframe(iframe) {
             this.processedIframes.add(iframe);
 
+            // Resolve original src
             let originalSrc = '';
             const encryptedSrc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
             if (encryptedSrc) {
-                try {
-                    originalSrc = this.decryptURL(encryptedSrc);
-                    if (!originalSrc || originalSrc.length === 0) {
-                        throw new Error('Decryption returned empty');
-                    }
-                } catch (e) {
-                    try {
-                        originalSrc = decodeURIComponent(escape(atob(encryptedSrc)));
-                    } catch (e2) {
-                        try {
-                            originalSrc = atob(encryptedSrc);
-                        } catch (e3) {
-                            this.debug('[PDF] Failed to decrypt src:', e3);
-                            originalSrc = '';
-                        }
-                    }
-                }
+                originalSrc = this.decryptURL(encryptedSrc);
                 if (originalSrc) {
+                    // Re-encrypt with canonical algorithm to ensure consistency
                     iframe.setAttribute('data-pdf-lazy-original-src-enc', this.encryptURL(originalSrc));
                 }
             } else {
                 originalSrc = iframe.getAttribute('src') || '';
             }
-            
-            if (iframe.hasAttribute('data-pdf-lazy-intercepted')) {
-                iframe.removeAttribute('data-pdf-lazy-intercepted');
-            }
-            
-            const computedStyle = window.getComputedStyle(iframe);
-            let width = iframe.getAttribute('width') || '';
-            let height = iframe.getAttribute('height') || '';
-            
-            const offsetWidth = iframe.offsetWidth;
-            const offsetHeight = iframe.offsetHeight;
-            
-            this.debug('[PDF] Iframe raw dimensions - offsetWidth:', offsetWidth, 'offsetHeight:', offsetHeight);
-            this.debug('[PDF] Iframe attributes - width:', iframe.getAttribute('width'), 'height:', iframe.getAttribute('height'));
-            this.debug('[PDF] Iframe computed - width:', computedStyle.width, 'height:', computedStyle.height);
-            
-            if (offsetWidth > 10) { // Use offsetWidth if it's reasonable (more than 10px)
-                width = offsetWidth + 'px';
-            } else if (width && width !== 'auto' && width !== '0px' && width !== '1px') {
-            } else if (computedStyle.width && computedStyle.width !== 'auto' && computedStyle.width !== '0px' && computedStyle.width !== '1px') {
-                width = computedStyle.width;
-            } else {
-                const parent = iframe.parentElement;
-                if (parent) {
-                    const parentOffsetWidth = parent.offsetWidth;
-                    const parentComputedWidth = window.getComputedStyle(parent).width;
-                    if (parentOffsetWidth && parentOffsetWidth > 0) {
-                        width = parentOffsetWidth + 'px';
-                    } else if (parentComputedWidth && parentComputedWidth !== 'auto' && parentComputedWidth !== '0px') {
-                        width = parentComputedWidth; // Already has 'px' unit
-                    } else {
-                        width = '100%';
-                    }
-                } else {
-                    width = '100%';
-                }
-            }
-            
-            if (offsetHeight > 10) { // Use offsetHeight if it's reasonable (more than 10px)
-                height = offsetHeight + 'px';
-            } else if (height && height !== 'auto' && height !== '0px' && height !== '1px') {
-            } else if (computedStyle.height && computedStyle.height !== 'auto' && computedStyle.height !== '0px' && computedStyle.height !== '1px') {
-                height = computedStyle.height;
-            } else {
-                height = '600px'; // Default height
-            }
 
-            if (!width || width === '0px' || width === 'auto' || width === '1px') {
-                width = '100%';
-            } else if (typeof width === 'number') {
-                width = width + 'px';
-            } else if (!width.includes('%') && !width.includes('px') && !width.includes('em') && !width.includes('rem')) {
-                const numWidth = parseFloat(width);
-                if (!isNaN(numWidth)) {
-                    width = numWidth + 'px';
-                } else {
-                    width = '100%';
-                }
+            iframe.removeAttribute('data-pdf-lazy-intercepted');
+
+            // Capture dimensions before hiding
+            const computedStyle  = window.getComputedStyle(iframe);
+            const offsetWidth    = iframe.offsetWidth;
+            const offsetHeight   = iframe.offsetHeight;
+
+            let width  = offsetWidth  > 10 ? offsetWidth  + 'px' : (computedStyle.width  || '');
+            let height = offsetHeight > 10 ? offsetHeight + 'px' : (computedStyle.height || '');
+
+            if (!width || width === 'auto' || width === '0px' || width === '1px') {
+                const pw = iframe.parentElement ? iframe.parentElement.offsetWidth : 0;
+                width = pw > 0 ? pw + 'px' : '100%';
             }
-            
-            if (!height || height === '0px' || height === 'auto' || height === '1px') {
+            if (!height || height === 'auto' || height === '0px' || height === '1px') {
                 height = '600px';
-            } else if (typeof height === 'number') {
-                height = height + 'px';
-            } else if (!height.includes('%') && !height.includes('px') && !height.includes('em') && !height.includes('rem')) {
-                const numHeight = parseFloat(height);
-                if (!isNaN(numHeight)) {
-                    height = numHeight + 'px';
-                } else {
-                    height = '600px';
-                }
             }
 
-            this.debug('[PDF] Final iframe dimensions - width:', width, 'height:', height);
-            
-            const pdfUrl = this.extractPDFUrl(iframe);
-            
-            const finalPdfUrl = (pdfUrl && pdfUrl !== originalSrc && !pdfUrl.includes('pdfemb-data')) ? pdfUrl : originalSrc;
-            
+            // Normalize units
+            const addPx = v => (!v.includes('%') && !v.includes('px') && !v.includes('em') && !v.includes('rem'))
+                ? (parseFloat(v) || 0) + 'px' : v;
+            width  = addPx(width);
+            height = addPx(height);
+
+            this.debug('processIframe: dimensions width:', width, 'height:', height);
+
+            const pdfUrl     = this.extractPDFUrl(iframe);
+            const finalPdfUrl = (pdfUrl && pdfUrl !== originalSrc && !pdfUrl.includes('pdfemb-data'))
+                ? pdfUrl : originalSrc;
+
             if (!finalPdfUrl) {
-                this.debug('[PDF] No valid PDF URL found, skipping');
-                this.debug('[PDF] Original src:', originalSrc);
-                this.debug('[PDF] Extracted URL:', pdfUrl);
+                this.debug('processIframe: no valid PDF URL, skipping');
                 return;
             }
 
-            this.debug('[PDF] URL processing:');
-            this.debug('[PDF] - Original src:', originalSrc);
-            this.debug('[PDF] - Extracted URL:', pdfUrl);
-            this.debug('[PDF] - Final PDF URL:', finalPdfUrl);
-
-            this.debug('[PDF] PDF URL:', finalPdfUrl);
-            this.debug('[PDF] Original src:', originalSrc);
-            this.debug('[PDF] *** IFRAME HIDDEN IMMEDIATELY ***');
-
-            if (iframe.hasAttribute('src')) {
-                iframe.removeAttribute('src');
-            }
-            
-            if (iframe.hasAttribute('data-pdf-lazy-intercepted')) {
-                iframe.removeAttribute('data-pdf-lazy-intercepted');
-            }
-            
-            iframe.style.display = 'none';
-            iframe.style.visibility = 'hidden';
-            iframe.style.position = 'absolute';
-            iframe.style.left = '-9999px';
-            iframe.style.top = '-9999px';
-            iframe.style.width = '1px';
-            iframe.style.height = '1px';
-            iframe.style.opacity = '0';
-            iframe.style.pointerEvents = 'none';
-            iframe.style.zIndex = '-1';
-            
+            // Hide original iframe completely
+            iframe.removeAttribute('src');
+            Object.assign(iframe.style, {
+                display:       'none',
+                visibility:    'hidden',
+                position:      'absolute',
+                left:          '-9999px',
+                top:           '-9999px',
+                width:         '1px',
+                height:        '1px',
+                opacity:       '0',
+                pointerEvents: 'none',
+                zIndex:        '-1',
+            });
             iframe.setAttribute('aria-hidden', 'true');
             iframe.setAttribute('tabindex', '-1');
 
+            // Build facade wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'pdf-facade-wrapper pdf-lazy-loader-wrapper';
-            wrapper.setAttribute('data-pdf-url-enc', this.encryptURL(finalPdfUrl));
-            wrapper.setAttribute('data-original-src-enc', this.encryptURL(originalSrc));
-            wrapper.setAttribute('data-iframe-width', width); // Store width for restoration
-            wrapper.setAttribute('data-iframe-height', height); // Store height for restoration
-            wrapper.style.cssText = `
-                width: ${width};
-                margin: 0 auto 20px;
-                position: relative;
-                display: block;
-                visibility: visible;
-                opacity: 1;
-                z-index: 1;
-            `;
+            wrapper.setAttribute('data-pdf-url-enc',       this.encryptURL(finalPdfUrl));
+            wrapper.setAttribute('data-original-src-enc',  this.encryptURL(originalSrc));
+            wrapper.setAttribute('data-iframe-width',  width);
+            wrapper.setAttribute('data-iframe-height', height);
+            wrapper.style.cssText = `width:${width};margin:0 auto 20px;position:relative;display:block;`;
 
             const getFacadeHeight = () => {
-                const width = window.innerWidth;
-                if (width >= 1024) {
-                    return this.options.facadeHeightDesktop || 600;
-                } else if (width >= 768) {
-                    return this.options.facadeHeightTablet || 500;
-                } else {
-                    return this.options.facadeHeightMobile || 400;
-                }
+                const w = window.innerWidth;
+                if (w >= 1024) return (this.options.facadeHeightDesktop || 600) + 'px';
+                if (w >= 768)  return (this.options.facadeHeightTablet  || 500) + 'px';
+                return (this.options.facadeHeightMobile || 400) + 'px';
             };
-            
-            const facadeHeight = getFacadeHeight() + 'px';
 
             const facade = document.createElement('div');
             facade.className = 'pdf-facade-container pdf-lazy-loader-facade';
             facade.style.cssText = `
-                width: 100%;
-                height: ${facadeHeight};
-                min-height: ${facadeHeight};
-                border-radius: 8px;
-                background: linear-gradient(to bottom, #f8f9fa 0%, #e9ecef 50%, #f8f9fa 100%);
-                padding: 40px 20px;
-                display: flex !important;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                position: relative;
-                overflow: hidden;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                visibility: visible !important;
-                opacity: 1 !important;
-                z-index: 10;
-                box-sizing: border-box;
+                width:100%;height:${getFacadeHeight()};min-height:${getFacadeHeight()};
+                border-radius:8px;
+                background:linear-gradient(to bottom,#f8f9fa 0%,#e9ecef 50%,#f8f9fa 100%);
+                padding:40px 20px;display:flex;flex-direction:column;
+                align-items:center;justify-content:center;
+                position:relative;overflow:hidden;
+                font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+                box-sizing:border-box;
             `;
-            
-            facade.setAttribute('data-facade-height-desktop', this.options.facadeHeightDesktop || 600);
-            facade.setAttribute('data-facade-height-tablet', this.options.facadeHeightTablet || 500);
-            facade.setAttribute('data-facade-height-mobile', this.options.facadeHeightMobile || 400);
-            
-            facade.style.setProperty('--facade-height-desktop', (this.options.facadeHeightDesktop || 600) + 'px');
-            facade.style.setProperty('--facade-height-tablet', (this.options.facadeHeightTablet || 500) + 'px');
-            facade.style.setProperty('--facade-height-mobile', (this.options.facadeHeightMobile || 400) + 'px');
-            
-            const updateFacadeHeight = () => {
-                const newHeight = getFacadeHeight() + 'px';
-                facade.style.height = newHeight;
-                facade.style.minHeight = newHeight;
-            };
-            
-            window.addEventListener('resize', updateFacadeHeight);
+            window.addEventListener('resize', () => {
+                const h = getFacadeHeight();
+                facade.style.height    = h;
+                facade.style.minHeight = h;
+            });
 
-            const content = document.createElement('div');
-            content.className = 'pdf-facade-content';
-            content.style.cssText = `
-                position: relative;
-                z-index: 1;
-                text-align: center;
-                padding: 40px 20px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                width: 100%;
-            `;
-
+            // Icon
             const icon = document.createElement('div');
-            icon.className = 'pdf-facade-icon';
-            icon.style.cssText = `
-                width: 80px;
-                height: 80px;
-                background: ${this.options.buttonColor};
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 0 auto 20px auto;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            `;
-            icon.innerHTML = '<span style="color: white; font-size: 32px; font-weight: 700; font-family: sans-serif; line-height: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;">PDF</span>';
+            icon.style.cssText = `width:80px;height:80px;background:${this.options.buttonColor};
+                border-radius:8px;display:flex;align-items:center;justify-content:center;
+                margin:0 auto 20px;box-shadow:0 4px 12px rgba(0,0,0,.15);`;
+            icon.innerHTML = '<span style="color:#fff;font-size:32px;font-weight:700;font-family:sans-serif;">PDF</span>';
 
             const title = document.createElement('h3');
-            title.className = 'pdf-facade-title';
-            title.style.cssText = `
-                margin: 0 0 10px 0;
-                color: #333;
-                font-size: 20px;
-                font-weight: 600;
-                text-align: center;
-                width: 100%;
-            `;
+            title.style.cssText = 'margin:0 0 10px;color:#333;font-size:20px;font-weight:600;text-align:center;';
             title.textContent = 'PDF Document';
 
             const subtitle = document.createElement('p');
             subtitle.className = 'pdf-facade-subtitle';
-            subtitle.style.cssText = `
-                margin: 0 0 20px 0;
-                color: #666;
-                font-size: 14px;
-                text-align: center;
-                width: 100%;
-            `;
+            subtitle.style.cssText = 'margin:0 0 20px;color:#666;font-size:14px;text-align:center;';
             subtitle.textContent = 'Click the button below to load the document';
 
-            const buttonsContainer = document.createElement('div');
-            buttonsContainer.className = 'pdf-facade-buttons';
-            buttonsContainer.style.cssText = `
-                display: flex;
-                gap: 10px;
-                justify-content: center;
-                flex-wrap: wrap;
-            `;
+            const btnsContainer = document.createElement('div');
+            btnsContainer.className = 'pdf-facade-buttons';
+            btnsContainer.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;';
 
-            const viewButton = document.createElement('button');
-            viewButton.className = 'pdf-view-button pdf-lazy-loader-view-btn';
-            viewButton.type = 'button';
-            viewButton.innerHTML = '<span style="margin-right: 8px;">📖</span>View PDF';
-            viewButton.style.cssText = `
-                padding: 12px 24px;
-                background: ${this.options.buttonColor};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                display: inline-flex;
-                align-items: center;
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            `;
-
-            viewButton.addEventListener('mouseenter', () => {
-                viewButton.style.background = this.options.buttonColorHover;
-                viewButton.style.transform = 'translateY(-2px)';
+            const viewBtn = document.createElement('button');
+            viewBtn.type = 'button';
+            viewBtn.className = 'pdf-view-button pdf-lazy-loader-view-btn';
+            viewBtn.innerHTML = '<span style="margin-right:8px">\uD83D\uDCD6</span>View PDF';
+            viewBtn.style.cssText = `padding:12px 24px;background:${this.options.buttonColor};
+                color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;
+                cursor:pointer;transition:all .3s;display:inline-flex;align-items:center;
+                box-shadow:0 2px 4px rgba(0,0,0,.1);`;
+            viewBtn.addEventListener('mouseenter', () => {
+                viewBtn.style.background  = this.options.buttonColorHover;
+                viewBtn.style.transform   = 'translateY(-2px)';
             });
-            viewButton.addEventListener('mouseleave', () => {
-                viewButton.style.background = this.options.buttonColor;
-                viewButton.style.transform = 'translateY(0)';
+            viewBtn.addEventListener('mouseleave', () => {
+                viewBtn.style.background  = this.options.buttonColor;
+                viewBtn.style.transform   = 'translateY(0)';
             });
-
-            viewButton.addEventListener('click', () => {
-                this.debug('[PDF] View button clicked');
+            viewBtn.addEventListener('click', () => {
                 this.handleViewPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc);
             });
-
-            buttonsContainer.appendChild(viewButton);
+            btnsContainer.appendChild(viewBtn);
 
             if (this.options.enableDownload) {
-                this.debug('[PDF] Download enabled: true');
-                const downloadButton = document.createElement('button');
-                downloadButton.className = 'pdf-download-button pdf-lazy-loader-download-btn';
-                downloadButton.innerHTML = '<span style="margin-right: 8px;">⬇️</span>Download';
-                downloadButton.type = 'button';
-                downloadButton.setAttribute('data-pdf-url-enc', this.encryptURL(finalPdfUrl));
-                downloadButton.style.cssText = `
-                    padding: 12px 24px;
-                    background: white;
-                    color: #333;
-                    border: 2px solid #ddd;
-                    border-radius: 6px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    text-decoration: none;
-                    transition: all 0.3s ease;
-                    display: inline-flex;
-                    align-items: center;
-                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                `;
-
-                downloadButton.addEventListener('mouseenter', () => {
-                    downloadButton.style.background = '#f5f5f5';
-                    downloadButton.style.borderColor = '#bbb';
-                });
-                downloadButton.addEventListener('mouseleave', () => {
-                    downloadButton.style.background = 'white';
-                    downloadButton.style.borderColor = '#ddd';
-                });
-
-                downloadButton.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    this.handleDownloadPDF(downloadButton);
-                });
-
-                buttonsContainer.appendChild(downloadButton);
-            } else {
-                this.debug('[PDF] Download enabled: false');
+                const dlBtn = document.createElement('button');
+                dlBtn.type = 'button';
+                dlBtn.className = 'pdf-download-button pdf-lazy-loader-download-btn';
+                dlBtn.innerHTML = '<span style="margin-right:8px">\u2B07\uFE0F</span>Download';
+                dlBtn.setAttribute('data-pdf-url-enc', this.encryptURL(finalPdfUrl));
+                dlBtn.style.cssText = `padding:12px 24px;background:#fff;color:#333;
+                    border:2px solid #ddd;border-radius:6px;font-size:14px;font-weight:600;
+                    cursor:pointer;transition:all .3s;display:inline-flex;align-items:center;
+                    box-shadow:0 2px 4px rgba(0,0,0,.1);`;
+                dlBtn.addEventListener('mouseenter', () => { dlBtn.style.background = '#f5f5f5'; dlBtn.style.borderColor = '#bbb'; });
+                dlBtn.addEventListener('mouseleave', () => { dlBtn.style.background = '#fff';    dlBtn.style.borderColor = '#ddd'; });
+                dlBtn.addEventListener('click', e => { e.preventDefault(); this.handleDownloadPDF(dlBtn); });
+                btnsContainer.appendChild(dlBtn);
             }
 
             const infoText = document.createElement('p');
             infoText.className = 'pdf-facade-info';
-            infoText.style.cssText = `
-                margin: 20px 0 0 0;
-                color: #999;
-                font-size: 13px;
-                text-align: center;
-            `;
+            infoText.style.cssText = 'margin:20px 0 0;color:#999;font-size:13px;text-align:center;';
             infoText.textContent = 'Document will be loaded on first access';
 
-
-            content.appendChild(icon);
-            content.appendChild(title);
-            content.appendChild(subtitle);
-            content.appendChild(buttonsContainer);
-            content.appendChild(infoText);
+            const content = document.createElement('div');
+            content.className = 'pdf-facade-content';
+            content.style.cssText = 'position:relative;z-index:1;text-align:center;padding:40px 20px;display:flex;flex-direction:column;align-items:center;width:100%;';
+            content.append(icon, title, subtitle, btnsContainer, infoText);
             facade.appendChild(content);
             wrapper.appendChild(facade);
 
-            if (iframe.parentNode) {
-                try {
-                    iframe.parentNode.insertBefore(wrapper, iframe);
-                    this.debug('[PDF] Facade inserted into DOM before iframe');
-                } catch (e) {
-                    this.debug('[PDF] insertBefore failed, trying appendChild:', e);
-                    iframe.parentNode.appendChild(wrapper);
-                }
-            } else {
-                if (this.options.debugMode) {
-                    console.error('[PDF] Cannot insert facade - iframe has no parent node');
-                }
+            if (!iframe.parentNode) {
+                if (this.options.debugMode) console.error('[PDF] Cannot insert facade — iframe has no parent node');
                 return;
             }
-
-            wrapper.style.setProperty('display', 'block', 'important');
-            wrapper.style.setProperty('visibility', 'visible', 'important');
-            wrapper.style.setProperty('opacity', '1', 'important');
-            wrapper.style.setProperty('z-index', '10', 'important');
-            wrapper.style.setProperty('position', 'relative', 'important');
-
-            setTimeout(() => {
-                const isInDOM = document.body.contains(wrapper) || iframe.parentNode.contains(wrapper);
-                const computedDisplay = window.getComputedStyle(wrapper).display;
-                const computedVisibility = window.getComputedStyle(wrapper).visibility;
-                const computedOpacity = window.getComputedStyle(wrapper).opacity;
-                
-                this.debug('[PDF] Facade verification:');
-                this.debug('[PDF] - In DOM:', isInDOM);
-                this.debug('[PDF] - Display:', computedDisplay);
-                this.debug('[PDF] - Visibility:', computedVisibility);
-                this.debug('[PDF] - Opacity:', computedOpacity);
-                this.debug('[PDF] - Wrapper dimensions:', wrapper.offsetWidth, 'x', wrapper.offsetHeight);
-                this.debug('[PDF] - Facade dimensions:', facade.offsetWidth, 'x', facade.offsetHeight);
-                
-                if (!isInDOM || computedDisplay === 'none' || computedVisibility === 'hidden' || computedOpacity === '0') {
-                    if (this.options.debugMode) {
-                        console.error('[PDF] WARNING: Facade may not be visible!');
-                    }
-                }
-            }, 100);
-
-            this.debug('[PDF] Facade created and should be visible');
+            iframe.parentNode.insertBefore(wrapper, iframe);
+            this.debug('processIframe: facade inserted');
         }
 
         loadPDF(iframe, facade, pdfUrl, originalSrc, wrapper) {
-            this.debug('[PDF] loadPDF called');
-            this.debug('[PDF] Starting loading animation: ' + this.options.loadingTime + 'ms');
-            this.debug('[PDF] Original src:', originalSrc);
-            this.debug('[PDF] PDF URL:', pdfUrl);
-            
-            if (!originalSrc && !pdfUrl) {
-                this.debug('[PDF] ERROR: Both originalSrc and pdfUrl are empty!');
-                console.error('[PDF] Cannot load PDF: no valid URL provided');
+            this.debug('loadPDF called, url:', pdfUrl);
+            if (!pdfUrl && !originalSrc) {
+                if (this.options.debugMode) console.error('[PDF] Cannot load PDF: no valid URL');
                 return;
             }
-            
-            if (!originalSrc) {
-                this.debug('[PDF] WARNING: originalSrc is empty, using pdfUrl');
-                originalSrc = pdfUrl;
-            }
-            
-            if (!pdfUrl) {
-                this.debug('[PDF] WARNING: pdfUrl is empty, using originalSrc');
-                pdfUrl = originalSrc;
-            }
+            originalSrc = originalSrc || pdfUrl;
+            pdfUrl      = pdfUrl      || originalSrc;
 
-            const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
-            const subtitle = facade.querySelector('.pdf-facade-subtitle');
-            const infoText = facade.querySelector('.pdf-facade-info');
-            if (buttonsContainer) {
-                buttonsContainer.style.display = 'none';
-            }
-            if (subtitle) {
-                subtitle.style.display = 'none';
-            }
-            if (infoText) {
-                infoText.style.display = 'none';
-            }
-            
-            const loadingSpinner = document.createElement('div');
-            loadingSpinner.className = 'pdf-loading-spinner';
-            loadingSpinner.style.cssText = `
-                position: relative;
-                width: 100%;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                gap: 8px;
-                margin: 8px 0 0 0;
-                z-index: 10;
-            `;
-            
+            // Hide buttons and show spinner
+            const btnsContainer = facade.querySelector('.pdf-facade-buttons');
+            const subtitle      = facade.querySelector('.pdf-facade-subtitle');
+            const infoText      = facade.querySelector('.pdf-facade-info');
+            if (btnsContainer) btnsContainer.style.display = 'none';
+            if (subtitle)      subtitle.style.display      = 'none';
+            if (infoText)      infoText.style.display       = 'none';
+
             const spinner = document.createElement('div');
-            spinner.className = 'pdf-spinner';
-            spinner.style.cssText = `
-                width: 40px;
-                height: 40px;
-                border: 3px solid rgba(0, 0, 0, 0.08);
-                border-top-color: ${this.options.buttonColor};
-                border-right-color: ${this.options.buttonColor};
-                border-radius: 50%;
-                animation: pdf-spin 0.8s linear infinite;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-                flex-shrink: 0;
-            `;
-            
-            const loadingText = document.createElement('div');
-            loadingText.className = 'pdf-loading-text';
-            loadingText.style.cssText = `
-                color: #666;
-                font-size: 13px;
-                font-weight: 500;
-                margin: 0;
-                text-align: center;
-                line-height: 1.4;
-            `;
-            loadingText.textContent = 'Loading PDF...';
-            
-            loadingSpinner.appendChild(spinner);
-            loadingSpinner.appendChild(loadingText);
-            
-            const content = facade.querySelector('.pdf-facade-content');
-            if (content) {
-                const title = content.querySelector('.pdf-facade-title');
-                if (title) {
-                    title.insertAdjacentElement('afterend', loadingSpinner);
-                } else {
-                    content.appendChild(loadingSpinner);
-                }
-            } else {
-                facade.appendChild(loadingSpinner);
-            }
+            spinner.className = 'pdf-loading-spinner';
+            spinner.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:8px;';
+            spinner.innerHTML = `
+                <div class="pdf-spinner" style="width:40px;height:40px;
+                    border:3px solid rgba(0,0,0,.08);
+                    border-top-color:${this.options.buttonColor};
+                    border-radius:50%;animation:pdf-spin .8s linear infinite;"></div>
+                <div style="color:#666;font-size:13px;">Loading PDF...</div>`;
+
+            const contentEl = facade.querySelector('.pdf-facade-content');
+            const titleEl   = contentEl ? contentEl.querySelector('h3') : null;
+            if (titleEl) titleEl.insertAdjacentElement('afterend', spinner);
+            else if (contentEl) contentEl.appendChild(spinner);
+            else facade.appendChild(spinner);
 
             setTimeout(() => {
-                this.debug('[PDF] IFRAME SHOWN');
-                
-                const spinnerElement = facade.querySelector('.pdf-loading-spinner');
-                if (spinnerElement) {
-                    spinnerElement.remove();
-                }
-                
-                const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
-                if (buttonsContainer) {
-                    buttonsContainer.style.opacity = '1';
-                }
-                
-                if (!wrapper) {
-                    wrapper = facade.closest('.pdf-facade-wrapper');
-                }
-                
-                let wrapperWidth = '';
-                let wrapperHeight = '';
-                if (wrapper) {
-                    wrapperWidth = wrapper.getAttribute('data-iframe-width') || '';
-                    wrapperHeight = wrapper.getAttribute('data-iframe-height') || '';
-                    
-                    if (!wrapperWidth || !wrapperHeight) {
-                        const wrapperComputedStyle = window.getComputedStyle(wrapper);
-                        wrapperWidth = wrapperWidth || wrapperComputedStyle.width || wrapper.style.width || '';
-                        wrapperHeight = wrapperHeight || wrapperComputedStyle.height || wrapper.style.height || '';
-                    }
-                    
-                    this.debug('[PDF] Wrapper dimensions to preserve - width:', wrapperWidth, 'height:', wrapperHeight);
-                }
-                
+                const spinnerEl = facade.querySelector('.pdf-loading-spinner');
+                if (spinnerEl) spinnerEl.remove();
+
+                if (!wrapper) wrapper = facade.closest('.pdf-facade-wrapper');
+                const storedWidth  = wrapper ? wrapper.getAttribute('data-iframe-width')  : '';
+                const storedHeight = wrapper ? wrapper.getAttribute('data-iframe-height') : '';
+
                 const srcToRestore = originalSrc || pdfUrl;
-                this.debug('[PDF] Restoring iframe src:', srcToRestore);
-                
-                if (!srcToRestore || srcToRestore.trim() === '') {
-                    this.debug('[PDF] ERROR: Cannot restore iframe - srcToRestore is empty!');
-                    console.error('[PDF] Cannot restore iframe: empty URL');
+                if (!srcToRestore) {
+                    if (this.options.debugMode) console.error('[PDF] Cannot restore iframe: empty URL');
                     return;
                 }
-                
+
                 iframe.setAttribute('src', srcToRestore);
-                
                 iframe.src = srcToRestore;
-                
+
+                // Remove facade and re-insert iframe in place
                 if (wrapper) {
-                    const wrapperParent = wrapper.parentNode;
-                    const wrapperNextSibling = wrapper.nextSibling;
-                    
-                    const facadeInWrapper = wrapper.querySelector('.pdf-facade-container');
-                    if (facadeInWrapper) {
-                        facadeInWrapper.remove();
-                    }
-                    
+                    const parent      = wrapper.parentNode;
+                    const nextSibling = wrapper.nextSibling;
                     wrapper.remove();
-                    
-                    if (wrapperParent) {
-                        if (wrapperNextSibling) {
-                            wrapperParent.insertBefore(iframe, wrapperNextSibling);
-                        } else {
-                            wrapperParent.appendChild(iframe);
-                        }
+                    if (parent) {
+                        if (nextSibling) parent.insertBefore(iframe, nextSibling);
+                        else             parent.appendChild(iframe);
                     }
                 } else {
                     facade.remove();
                 }
-                
-                iframe.style.display = '';
-                iframe.style.visibility = '';
-                iframe.style.position = '';
-                iframe.style.opacity = '';
-                iframe.style.left = '';
-                iframe.style.top = '';
-                iframe.style.pointerEvents = '';
-                iframe.style.zIndex = '';
-                
-                if (wrapperWidth) {
-                    iframe.style.width = wrapperWidth;
-                    const widthValue = wrapperWidth.replace('px', '').replace('%', '');
-                    if (widthValue) {
-                        iframe.setAttribute('width', widthValue + (wrapperWidth.includes('%') ? '%' : ''));
-                    }
-                }
-                if (wrapperHeight) {
-                    iframe.style.height = wrapperHeight;
-                    const heightValue = wrapperHeight.replace('px', '').replace('%', '');
-                    if (heightValue) {
-                        iframe.setAttribute('height', heightValue + (wrapperHeight.includes('%') ? '%' : ''));
-                    }
-                }
-                
-                iframe.offsetHeight; // Trigger reflow
-                
+
+                // Restore iframe styles
+                const resetStyles = ['display','visibility','position','opacity','left','top','pointerEvents','zIndex','width','height'];
+                resetStyles.forEach(p => { iframe.style[p] = ''; });
+                if (storedWidth)  iframe.style.width  = storedWidth;
+                if (storedHeight) iframe.style.height = storedHeight;
+
                 iframe.removeAttribute('aria-hidden');
                 iframe.removeAttribute('tabindex');
-                
-                this.debug('[PDF] Iframe restored and visible');
-                this.debug('[PDF] Iframe dimensions - width:', iframe.style.width, 'height:', iframe.style.height);
-                this.debug('[PDF] Iframe offset dimensions - width:', iframe.offsetWidth, 'height:', iframe.offsetHeight);
-                
-                if (typeof jQuery !== 'undefined' && jQuery.fn.pdfEmbedder) {
-                    this.debug('[PDF] Reinitializing PDFEmbedder');
-                    try {
-                        jQuery(iframe).pdfEmbedder();
-                    } catch (e) {
-                        this.debug('[PDF] PDFEmbedder reinitialization failed:', e);
-                    }
-                }
-                
+                iframe.offsetHeight; // reflow
+
                 if (typeof window.dispatchEvent !== 'undefined') {
                     window.dispatchEvent(new Event('resize'));
                 }
+                this.debug('loadPDF: iframe restored');
             }, this.options.loadingTime);
         }
 
-
         loadTurnstileScript() {
             return new Promise((resolve, reject) => {
-                if (typeof turnstile !== 'undefined') {
-                    resolve();
-                    return;
-                }
-                
+                if (typeof turnstile !== 'undefined') { resolve(); return; }
+
                 if (document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
                     let attempts = 0;
-                    const maxAttempts = 50;
-                    const checkInterval = setInterval(() => {
-                        attempts++;
-                        if (typeof turnstile !== 'undefined') {
-                            clearInterval(checkInterval);
-                            resolve();
-                        } else if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-                            reject(new Error('Turnstile script failed to load'));
-                        }
+                    const check = setInterval(() => {
+                        if (typeof turnstile !== 'undefined') { clearInterval(check); resolve(); }
+                        else if (++attempts >= 50)            { clearInterval(check); reject(new Error('Turnstile load timeout')); }
                     }, 100);
                     return;
                 }
-                
-                const script = document.createElement('script');
-                script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-                script.async = true;
-                script.defer = true;
-                script.onload = () => {
-                    this.debug('[PDF] Turnstile script loaded');
-                    resolve();
-                };
-                script.onerror = () => {
-                    this.debug('[PDF] Failed to load Turnstile script');
-                    reject(new Error('Failed to load Turnstile script'));
-                };
+
+                const script  = document.createElement('script');
+                script.src    = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+                script.async  = true;
+                script.defer  = true;
+                script.onload = () => { this.debug('Turnstile script loaded'); resolve(); };
+                script.onerror = () => reject(new Error('Failed to load Turnstile script'));
                 document.head.appendChild(script);
             });
         }
 
-
         initializeTurnstile(wrapper, facade) {
             return new Promise((resolve, reject) => {
-                let containerId = wrapper.getAttribute('data-turnstile-container-id');
-                let turnstileContainer = null;
-                
-                if (containerId) {
-                    turnstileContainer = document.getElementById(containerId);
-                }
-                
+                const content = facade.querySelector('.pdf-facade-content');
+                if (!content) { reject(new Error('Facade content not found')); return; }
+
+                let containerId      = wrapper.getAttribute('data-turnstile-container-id');
+                let turnstileContainer = containerId ? document.getElementById(containerId) : null;
+
                 if (!turnstileContainer) {
-                    const content = facade.querySelector('.pdf-facade-content');
-                    if (!content) {
-                        reject(new Error('Facade content not found'));
-                        return;
-                    }
-                    
-                    turnstileContainer = document.createElement('div');
+                    turnstileContainer    = document.createElement('div');
                     turnstileContainer.className = 'pdf-turnstile-container';
-                    containerId = 'pdf-turnstile-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                    containerId           = 'pdf-turnstile-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
                     turnstileContainer.id = containerId;
-                    turnstileContainer.style.cssText = `
-                        margin: 20px 0;
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: center;
-                        align-items: center;
-                        min-height: 65px;
-                    `;
-                    
-                    const buttonsContainer = content.querySelector('.pdf-facade-buttons');
-                    if (buttonsContainer && buttonsContainer.nextSibling) {
-                        content.insertBefore(turnstileContainer, buttonsContainer.nextSibling);
-                    } else {
-                        content.appendChild(turnstileContainer);
-                    }
-                    
+                    turnstileContainer.style.cssText = 'margin:20px 0;display:flex;flex-direction:column;align-items:center;min-height:65px;';
+                    const btns = content.querySelector('.pdf-facade-buttons');
+                    if (btns && btns.nextSibling) content.insertBefore(turnstileContainer, btns.nextSibling);
+                    else content.appendChild(turnstileContainer);
                     wrapper.setAttribute('data-turnstile-container-id', containerId);
                 }
-                
-                const buttonsContainer = facade.querySelector('.pdf-facade-buttons');
+
+                const btns     = facade.querySelector('.pdf-facade-buttons');
                 const infoText = facade.querySelector('.pdf-facade-info');
-                if (buttonsContainer) {
-                    buttonsContainer.style.display = 'none';
+                if (btns)     btns.style.display     = 'none';
+                if (infoText) infoText.style.display  = 'none';
+
+                let msgEl = turnstileContainer.querySelector('.pdf-turnstile-message');
+                if (!msgEl) {
+                    msgEl           = document.createElement('p');
+                    msgEl.className = 'pdf-turnstile-message';
+                    msgEl.style.cssText = 'margin:0 0 15px;color:#666;font-size:14px;text-align:center;';
+                    msgEl.textContent   = 'Please complete verification to continue';
+                    turnstileContainer.insertBefore(msgEl, turnstileContainer.firstChild);
                 }
-                if (infoText) {
-                    infoText.style.display = 'none';
-                }
-                
-                let messageEl = turnstileContainer.querySelector('.pdf-turnstile-message');
-                if (!messageEl) {
-                    messageEl = document.createElement('p');
-                    messageEl.className = 'pdf-turnstile-message';
-                    messageEl.style.cssText = `
-                        margin: 0 0 15px 0;
-                        color: #666;
-                        font-size: 14px;
-                        text-align: center;
-                        width: 100%;
-                        order: -1;
-                    `;
-                    messageEl.textContent = 'Please complete verification to continue';
-                    turnstileContainer.insertBefore(messageEl, turnstileContainer.firstChild);
-                }
-                
-                const self = this;
+
                 const siteKey = this.options.turnstileSiteKey;
-                let initAttempts = 0;
-                const maxInitAttempts = 50;
-                
-                const initTurnstile = () => {
-                    if (typeof turnstile !== 'undefined') {
+                let attempts  = 0;
+
+                const tryRender = () => {
+                    if (typeof turnstile === 'undefined') {
+                        if (++attempts < 50) { setTimeout(tryRender, 100); return; }
+                        if (msgEl) { msgEl.textContent = 'Failed to load verification. Please refresh.'; msgEl.style.color = '#e63946'; }
+                        reject(new Error('Turnstile not available'));
+                        return;
+                    }
+
+                    // Re-use existing valid token
+                    const existingId = wrapper.getAttribute('data-turnstile-widget-id');
+                    if (existingId) {
                         try {
-                            const existingWidgetId = wrapper.getAttribute('data-turnstile-widget-id');
-                            if (existingWidgetId) {
-                                try {
-                                    const token = turnstile.getResponse(existingWidgetId);
-                                    if (token) {
-                                        resolve(token);
-                                        return;
-                                    }
-                                } catch (e) {
-                                    wrapper.removeAttribute('data-turnstile-widget-id');
-                                }
-                            }
-                            
-                            const widgetId = turnstile.render('#' + containerId, {
-                                sitekey: siteKey,
-                                theme: 'light',
-                                size: 'normal',
-                                callback: function(token) {
-                                    self.debug('[PDF] Turnstile verification successful');
-                                    wrapper.setAttribute('data-turnstile-token', token);
-                                    
-                                    if (messageEl) {
-                                        messageEl.remove();
-                                    }
-                                    turnstileContainer.remove();
-                                    wrapper.removeAttribute('data-turnstile-container-id');
-                                    
-                                    if (buttonsContainer) {
-                                        buttonsContainer.style.display = '';
-                                    }
-                                    if (infoText) {
-                                        infoText.style.display = '';
-                                    }
-                                    
-                                    resolve(token);
-                                },
-                                'error-callback': function() {
-                                    self.debug('[PDF] Turnstile verification failed');
-                                    wrapper.removeAttribute('data-turnstile-token');
-                                    
-                                    if (messageEl) {
-                                        messageEl.textContent = 'Verification failed. Please try again.';
-                                        messageEl.style.color = '#e63946';
-                                    }
-                                    
-                                    reject(new Error('Turnstile verification failed'));
-                                },
-                                'expired-callback': function() {
-                                    self.debug('[PDF] Turnstile token expired');
-                                    wrapper.removeAttribute('data-turnstile-token');
-                                    
-                                    if (messageEl) {
-                                        messageEl.textContent = 'Verification expired. Please try again.';
-                                        messageEl.style.color = '#e63946';
-                                    }
-                                    
-                                    reject(new Error('Turnstile token expired'));
-                                }
-                            });
-                            
-                            if (widgetId) {
-                                wrapper.setAttribute('data-turnstile-widget-id', widgetId);
-                                self.debug('[PDF] Turnstile widget initialized with ID:', widgetId);
-                            }
-                        } catch (e) {
-                            self.debug('[PDF] Turnstile render error:', e);
-                            if (messageEl) {
-                                messageEl.textContent = 'Error initializing verification. Please refresh the page.';
-                                messageEl.style.color = '#e63946';
-                            }
-                            reject(e);
-                        }
-                    } else {
-                        initAttempts++;
-                        if (initAttempts < maxInitAttempts) {
-                            setTimeout(initTurnstile, 100);
-                        } else {
-                            self.debug('[PDF] Turnstile script failed to load');
-                            if (messageEl) {
-                                messageEl.textContent = 'Failed to load verification. Please refresh the page.';
-                                messageEl.style.color = '#e63946';
-                            }
-                            reject(new Error('Turnstile script failed to load'));
-                        }
+                            const t = turnstile.getResponse(existingId);
+                            if (t) { resolve(t); return; }
+                        } catch (_) { wrapper.removeAttribute('data-turnstile-widget-id'); }
+                    }
+
+                    try {
+                        const widgetId = turnstile.render('#' + containerId, {
+                            sitekey: siteKey,
+                            theme:   'light',
+                            size:    'normal',
+                            callback: token => {
+                                this.debug('Turnstile: verified');
+                                wrapper.setAttribute('data-turnstile-token', token);
+                                if (msgEl)   msgEl.remove();
+                                turnstileContainer.remove();
+                                wrapper.removeAttribute('data-turnstile-container-id');
+                                if (btns)     btns.style.display     = '';
+                                if (infoText) infoText.style.display  = '';
+                                resolve(token);
+                            },
+                            'error-callback': () => {
+                                this.debug('Turnstile: error');
+                                wrapper.removeAttribute('data-turnstile-token');
+                                if (msgEl) { msgEl.textContent = 'Verification failed. Please try again.'; msgEl.style.color = '#e63946'; }
+                                reject(new Error('Turnstile verification failed'));
+                            },
+                            'expired-callback': () => {
+                                this.debug('Turnstile: expired');
+                                wrapper.removeAttribute('data-turnstile-token');
+                                if (msgEl) { msgEl.textContent = 'Verification expired. Please try again.'; msgEl.style.color = '#e63946'; }
+                                reject(new Error('Turnstile token expired'));
+                            },
+                        });
+                        if (widgetId) wrapper.setAttribute('data-turnstile-widget-id', widgetId);
+                    } catch (e) {
+                        this.debug('Turnstile render error:', e);
+                        if (msgEl) { msgEl.textContent = 'Error initializing verification. Please refresh.'; msgEl.style.color = '#e63946'; }
+                        reject(e);
                     }
                 };
-                
-                setTimeout(initTurnstile, 100);
+
+                setTimeout(tryRender, 100);
             });
         }
 
-
         handleViewPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc) {
             if (this.options.enableTurnstile && this.options.turnstileSiteKey) {
-                let token = wrapper.getAttribute('data-turnstile-token');
-                
+                const token = wrapper.getAttribute('data-turnstile-token');
                 if (token) {
-                    this.debug('[PDF] Turnstile token found, proceeding with PDF load');
+                    this.debug('Turnstile token present, loading PDF');
                 } else {
-                    this.debug('[PDF] Turnstile verification required');
-                    
                     this.loadTurnstileScript()
-                        .then(() => {
-                            return this.initializeTurnstile(wrapper, facade);
-                        })
-                        .then((token) => {
-                            this.debug('[PDF] Turnstile verified, proceeding with PDF load');
-                            const encryptedPdfUrl = wrapper.getAttribute('data-pdf-url-enc');
-                            const encryptedOriginalSrc = wrapper.getAttribute('data-original-src-enc');
-                            
-                            this.debug('[PDF] Encrypted PDF URL from wrapper:', encryptedPdfUrl ? 'exists' : 'missing');
-                            this.debug('[PDF] Encrypted original src from wrapper:', encryptedOriginalSrc ? 'exists' : 'missing');
-                            
-                            let storedPdfUrl = finalPdfUrl;
-                            let storedOriginalSrc = originalSrc;
-                            
-                            if (encryptedPdfUrl) {
-                                try {
-                                    storedPdfUrl = this.decryptURL(encryptedPdfUrl);
-                                    this.debug('[PDF] Decrypted PDF URL:', storedPdfUrl);
-                                } catch (e) {
-                                    this.debug('[PDF] Failed to decrypt PDF URL, using fallback:', e);
-                                    storedPdfUrl = finalPdfUrl;
-                                }
-                            }
-                            
-                            if (encryptedOriginalSrc) {
-                                try {
-                                    storedOriginalSrc = this.decryptURL(encryptedOriginalSrc);
-                                    this.debug('[PDF] Decrypted original src:', storedOriginalSrc);
-                                } catch (e) {
-                                    this.debug('[PDF] Failed to decrypt original src, using fallback:', e);
-                                    storedOriginalSrc = originalSrc;
-                                }
-                            }
-                            
-                            this.loadPDF(iframe, facade, storedPdfUrl, storedOriginalSrc, wrapper);
-                        })
-                        .catch((error) => {
-                            this.debug('[PDF] Turnstile verification error:', error);
-                        });
-                    
-                    return; // Don't proceed until verification is complete
+                        .then(() => this.initializeTurnstile(wrapper, facade))
+                        .then(() => this._doLoadPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc))
+                        .catch(err => this.debug('Turnstile error:', err));
+                    return;
                 }
             }
-            
-            const encryptedPdfUrl = wrapper.getAttribute('data-pdf-url-enc');
-            const encryptedOriginalSrc = wrapper.getAttribute('data-original-src-enc');
-            
-            this.debug('[PDF] Encrypted PDF URL from wrapper:', encryptedPdfUrl ? 'exists' : 'missing');
-            this.debug('[PDF] Encrypted original src from wrapper:', encryptedOriginalSrc ? 'exists' : 'missing');
-            
-            let storedPdfUrl = finalPdfUrl;
-            let storedOriginalSrc = originalSrc;
-            
-            if (encryptedPdfUrl) {
-                try {
-                    storedPdfUrl = this.decryptURL(encryptedPdfUrl);
-                    this.debug('[PDF] Decrypted PDF URL:', storedPdfUrl);
-                } catch (e) {
-                    this.debug('[PDF] Failed to decrypt PDF URL, using fallback:', e);
-                    storedPdfUrl = finalPdfUrl;
-                }
-            }
-            
-            if (encryptedOriginalSrc) {
-                try {
-                    storedOriginalSrc = this.decryptURL(encryptedOriginalSrc);
-                    this.debug('[PDF] Decrypted original src:', storedOriginalSrc);
-                } catch (e) {
-                    this.debug('[PDF] Failed to decrypt original src, using fallback:', e);
-                    storedOriginalSrc = originalSrc;
-                }
-            }
-            
-            this.loadPDF(iframe, facade, storedPdfUrl, storedOriginalSrc, wrapper);
+            this._doLoadPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc);
         }
 
+        _doLoadPDF(wrapper, iframe, facade, finalPdfUrl, originalSrc) {
+            let storedPdfUrl    = finalPdfUrl;
+            let storedOrigSrc   = originalSrc;
+            const encPdf = wrapper.getAttribute('data-pdf-url-enc');
+            const encSrc = wrapper.getAttribute('data-original-src-enc');
+            if (encPdf) storedPdfUrl  = this.decryptURL(encPdf)  || finalPdfUrl;
+            if (encSrc) storedOrigSrc = this.decryptURL(encSrc)  || originalSrc;
+            this.loadPDF(iframe, facade, storedPdfUrl, storedOrigSrc, wrapper);
+        }
 
-        handleDownloadPDF(downloadButton) {
-            const wrapper = downloadButton.closest('.pdf-facade-wrapper');
-            
-            if (!wrapper) {
-                if (this.options.debugMode) {
-                    console.error('[PDF] Wrapper not found for download button');
-                }
-                return;
-            }
-            
-            const facade = wrapper.querySelector('.pdf-facade-container');
-            if (!facade) {
-                if (this.options.debugMode) {
-                    console.error('[PDF] Facade not found for download button');
-                }
-                return;
-            }
-            
+        handleDownloadPDF(dlBtn) {
+            const wrapper = dlBtn.closest('.pdf-facade-wrapper');
+            if (!wrapper) { if (this.options.debugMode) console.error('[PDF] Wrapper not found'); return; }
+            const facade  = wrapper.querySelector('.pdf-facade-container');
+            if (!facade)  { if (this.options.debugMode) console.error('[PDF] Facade not found');  return; }
+
+            const doDownload = () => {
+                const enc = dlBtn.getAttribute('data-pdf-url-enc');
+                if (!enc) return;
+                const url = this.decryptURL(enc);
+                if (!url)  return;
+                const a = document.createElement('a');
+                a.href = url; a.download = ''; a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+
             if (this.options.enableTurnstile && this.options.turnstileSiteKey) {
-                let token = wrapper.getAttribute('data-turnstile-token');
-                
-                if (token) {
-                    this.debug('[PDF] Turnstile token found, proceeding with download');
-                } else {
-                    this.debug('[PDF] Turnstile verification required for download');
-                    
-                    this.loadTurnstileScript()
-                        .then(() => {
-                            return this.initializeTurnstile(wrapper, facade);
-                        })
-                        .then((token) => {
-                            this.debug('[PDF] Turnstile verified, proceeding with download');
-                            const encryptedUrl = downloadButton.getAttribute('data-pdf-url-enc');
-                            if (encryptedUrl) {
-                                const pdfUrl = this.decryptURL(encryptedUrl);
-                                if (pdfUrl) {
-                                    const link = document.createElement('a');
-                                    link.href = pdfUrl;
-                                    link.download = '';
-                                    link.style.display = 'none';
-                                    document.body.appendChild(link);
-                                    link.click();
-                                    document.body.removeChild(link);
-                                }
-                            }
-                        })
-                        .catch((error) => {
-                            this.debug('[PDF] Turnstile verification error:', error);
-                        });
-                    
-                    return; // Don't proceed until verification is complete
-                }
+                const token = wrapper.getAttribute('data-turnstile-token');
+                if (token) { doDownload(); return; }
+                this.loadTurnstileScript()
+                    .then(() => this.initializeTurnstile(wrapper, facade))
+                    .then(() => doDownload())
+                    .catch(err => this.debug('Turnstile error:', err));
+                return;
             }
-            
-            const encryptedUrl = downloadButton.getAttribute('data-pdf-url-enc');
-            if (encryptedUrl) {
-                const pdfUrl = this.decryptURL(encryptedUrl);
-                if (pdfUrl) {
-                    const link = document.createElement('a');
-                    link.href = pdfUrl;
-                    link.download = '';
-                    link.style.display = 'none';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                }
-            }
+            doDownload();
         }
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            window.PDFLazyLoader = new PDFLazyLoader();
-        });
+        document.addEventListener('DOMContentLoaded', () => { window.PDFLazyLoader = new PDFLazyLoader(); });
     } else {
         window.PDFLazyLoader = new PDFLazyLoader();
     }
