@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks. Includes URL encryption, Cloudflare Turnstile protection, and responsive design.
- * Version: 1.0.8
+ * Version: 1.0.9
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PDF_LAZY_LOADER_VERSION', '1.0.8');
+define('PDF_LAZY_LOADER_VERSION', '1.0.9');
 define('PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -34,6 +34,10 @@ add_action('wp_head',               'pdf_lazy_loader_add_inline_script', 1);
 // Dequeue all PDF Embedder assets — loaded on-demand by JS after user clicks View PDF
 add_action('wp_enqueue_scripts', 'pdf_lazy_loader_dequeue_pdfemb_assets', 999);
 
+// ob_start HTML filter — strips <link> tags for PDF Embedder assets that were
+// enqueued AFTER wp_enqueue_scripts (e.g. inside shortcode render() callbacks).
+add_action('template_redirect', 'pdf_lazy_loader_start_output_buffer', 1);
+
 // Checkbox save hooks
 add_filter('pre_update_option_pdf_lazy_loader_enable_download',  'pdf_lazy_loader_update_checkbox', 10, 2);
 add_filter('pre_update_option_pdf_lazy_loader_enable_turnstile', 'pdf_lazy_loader_update_checkbox', 10, 2);
@@ -43,6 +47,59 @@ add_filter('the_content',         'pdf_lazy_loader_filter_content', 999);
 add_filter('widget_text',         'pdf_lazy_loader_filter_content', 999);
 add_filter('widget_block_content','pdf_lazy_loader_filter_content', 999);
 add_filter('rest_prepare_post',   'pdf_lazy_loader_filter_rest_content', 999, 3);
+
+// ---------------------------------------------------------------------------
+// ob_start output buffer — removes late-enqueued PDF Embedder <link> tags
+// ---------------------------------------------------------------------------
+
+/**
+ * Start output buffering on template_redirect.
+ * The callback strips any <link> and <script> tags whose src/href contains
+ * PDFEmbedder plugin paths, regardless of when wp_enqueue_style() was called.
+ */
+function pdf_lazy_loader_start_output_buffer() {
+    if (is_admin()) {
+        return;
+    }
+    if (!pdf_lazy_loader_has_pdf_iframes()) {
+        return;
+    }
+    ob_start('pdf_lazy_loader_filter_html_output');
+}
+
+/**
+ * ob_start callback: strip PDF Embedder <link> and <script> tags from HTML.
+ *
+ * Patterns matched (plugin folder names used by all known versions):
+ *  - /PDFEmbedder-premium/
+ *  - /PDFEmbedder-premium-secure/
+ *  - /pdf-embedder-premium/
+ *  - /pdf-embedder/         (free version)
+ *
+ * @param string $html Full page HTML.
+ * @return string Filtered HTML.
+ */
+function pdf_lazy_loader_filter_html_output($html) {
+    if (empty($html)) {
+        return $html;
+    }
+
+    // Match <link ... href="...pdfemb-path..." ...> tags (multiline, self-closing optional)
+    $html = preg_replace(
+        '#<link\b[^>]*\bhref=["\'][^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*["\'][^>]*/?\s*>#i',
+        '',
+        $html
+    );
+
+    // Match <script ... src="...pdfemb-path..." ...></script> tags
+    $html = preg_replace(
+        '#<script\b[^>]*\bsrc=["\'][^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*["\'][^>]*>\s*</script>#i',
+        '',
+        $html
+    );
+
+    return $html;
+}
 
 // ---------------------------------------------------------------------------
 // Dequeue PDF Embedder assets & collect their URLs for on-demand loading
@@ -57,6 +114,8 @@ add_filter('rest_prepare_post',   'pdf_lazy_loader_filter_rest_content', 999, 3)
 function pdf_lazy_loader_get_pdfemb_handles() {
     return array(
         'styles' => array(
+            // Premium v5.2+ (registered in render() — may fire after wp_enqueue_scripts)
+            'pdf-fullscreen',
             // Premium legacy (folder PDFEmbedder-premium / PDFEmbedder-premium-secure)
             'pdfemb-fullscreen',
             'pdfemb-frontend',
@@ -90,6 +149,12 @@ function pdf_lazy_loader_get_pdfemb_handles() {
  * Dequeue & deregister all PDF Embedder CSS/JS.
  * Collect their src URLs so the JS layer can inject them on-demand.
  * Stored in a global for wp_localize_script to pick up.
+ *
+ * NOTE: wp_enqueue_style('pdf-fullscreen') in PDFEmbedder's Viewer::render()
+ * fires during the_content — AFTER this hook runs — so ob_start filtering
+ * (pdf_lazy_loader_filter_html_output) is the primary removal mechanism for
+ * that particular asset. The handle list here acts as a belt-and-suspenders
+ * fallback for handles registered before wp_print_styles.
  */
 function pdf_lazy_loader_dequeue_pdfemb_assets() {
     if (is_admin()) {
@@ -125,7 +190,8 @@ function pdf_lazy_loader_dequeue_pdfemb_assets() {
         foreach ($wp_styles->queue as $queued_handle) {
             if (
                 (strpos($queued_handle, 'pdfemb') !== false ||
-                 strpos($queued_handle, 'pdf-embedder') !== false) &&
+                 strpos($queued_handle, 'pdf-embedder') !== false ||
+                 strpos($queued_handle, 'pdf-fullscreen') !== false) &&
                 isset($wp_styles->registered[$queued_handle])
             ) {
                 $src = $wp_styles->registered[$queued_handle]->src;
@@ -333,7 +399,8 @@ function pdf_lazy_loader_filter_content($content) {
     if (empty($content) || strpos($content, '<iframe') === false) return $content;
     return preg_replace_callback('/<iframe([^>]*?)>/is', function($matches) {
         $attrs = $matches[1];
-        if (preg_match('/\ssrc\s*=\s*["\']([^"\']*?)["\']/i', $attrs, $m)) {
+        if (preg_match('/\ssrc\s*=\s*["\'](.*?)["\']]/i', $attrs, $m) ||
+            preg_match('/\ssrc\s*=\s*["\']([^"\']*?)["\']/i', $attrs, $m)) {
             if (pdf_lazy_loader_is_pdf_url($m[1])) {
                 $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
                 $enc       = pdf_lazy_loader_encrypt_url($m[1]);
