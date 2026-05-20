@@ -34,8 +34,10 @@ add_action('wp_head',               'pdf_lazy_loader_add_inline_script', 1);
 // Dequeue all PDF Embedder assets — loaded on-demand by JS after user clicks View PDF
 add_action('wp_enqueue_scripts', 'pdf_lazy_loader_dequeue_pdfemb_assets', 999);
 
-// ob_start HTML filter — strips <link> tags for PDF Embedder assets that were
+// ob_start HTML filter — strips <link>/<script> tags for PDF Embedder assets that were
 // enqueued AFTER wp_enqueue_scripts (e.g. inside shortcode render() callbacks).
+// Before stripping, their URLs are captured into window.pdfLazyLoaderLateAssets
+// so the JS layer can inject them on-demand when the user clicks "View PDF".
 add_action('template_redirect', 'pdf_lazy_loader_start_output_buffer', 1);
 
 // Checkbox save hooks
@@ -49,7 +51,7 @@ add_filter('widget_block_content','pdf_lazy_loader_filter_content', 999);
 add_filter('rest_prepare_post',   'pdf_lazy_loader_filter_rest_content', 999, 3);
 
 // ---------------------------------------------------------------------------
-// ob_start output buffer — removes late-enqueued PDF Embedder <link> tags
+// ob_start output buffer — captures & removes late-enqueued PDF Embedder tags
 // ---------------------------------------------------------------------------
 
 function pdf_lazy_loader_start_output_buffer() {
@@ -58,16 +60,74 @@ function pdf_lazy_loader_start_output_buffer() {
     ob_start('pdf_lazy_loader_filter_html_output');
 }
 
+/**
+ * Scan the final HTML for any remaining PDF Embedder <link>/<script> tags
+ * (those registered inside shortcode render() calls, after wp_enqueue_scripts).
+ * Returns ['css' => [...], 'js' => [...]] with the collected absolute URLs.
+ *
+ * @param string $html
+ * @return array
+ */
+function pdf_lazy_loader_extract_late_pdfemb_assets($html) {
+    $assets = array('css' => array(), 'js' => array());
+
+    // Collect CSS href URLs
+    if (preg_match_all(
+        '#<link\b[^>]*\bhref=["\']([^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*)["\'][^>]*/?>\s*#i',
+        $html,
+        $m
+    )) {
+        $assets['css'] = array_values(array_unique($m[1]));
+    }
+
+    // Collect JS src URLs
+    if (preg_match_all(
+        '#<script\b[^>]*\bsrc=["\']([^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*)["\'][^>]*>\s*</script>#i',
+        $html,
+        $m
+    )) {
+        $assets['js'] = array_values(array_unique($m[1]));
+    }
+
+    return $assets;
+}
+
+/**
+ * ob_start callback:
+ * 1. Extract URLs of any late PDF Embedder assets still present in HTML.
+ * 2. Inject them as window.pdfLazyLoaderLateAssets into <head>.
+ * 3. Strip the original <link>/<script> tags.
+ *
+ * @param string $html Full page HTML.
+ * @return string Filtered HTML.
+ */
 function pdf_lazy_loader_filter_html_output($html) {
     if (empty($html)) return $html;
+
+    // Step 1 — collect late asset URLs before stripping
+    $late_assets = pdf_lazy_loader_extract_late_pdfemb_assets($html);
+
+    // Step 2 — inject as JS global so the frontend JS can merge & load them on click
+    if (!empty($late_assets['css']) || !empty($late_assets['js'])) {
+        $json   = wp_json_encode($late_assets);
+        $inline = '<script type="text/javascript">window.pdfLazyLoaderLateAssets=' . $json . ';</script>';
+        // Insert just before </head> — guaranteed to arrive before our main bundle
+        $html   = preg_replace('#(</head>)#i', $inline . '$1', $html, 1);
+    }
+
+    // Step 3 — strip the tags so PDF Embedder doesn't initialise on page load
     $html = preg_replace(
-        '#<link\b[^>]*\bhref=["\'][^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*["\'][^>]*/?\s*>#i',
-        '', $html
+        '#<link\b[^>]*\bhref=["\'][^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*["\'][^>]*/?>\s*#i',
+        '',
+        $html
     );
+
     $html = preg_replace(
         '#<script\b[^>]*\bsrc=["\'][^"\']*(?:PDFEmbedder-premium(?:-secure)?|pdf-embedder-premium|pdf-embedder)[^"\']*["\'][^>]*>\s*</script>#i',
-        '', $html
+        '',
+        $html
     );
+
     return $html;
 }
 

@@ -45,11 +45,11 @@
     class PDFLazyLoader {
         constructor() {
             this.options = getOptions();
-            this.version = '1.0.8';
+            this.version = '1.0.9';
             this.processedIframes = new WeakSet();
             this.encryptionKey = 'pdf-lazy-loader-secure-key-2024';
             this._pdfembAssetsLoaded = false;
-            this._pdfembAssetsLoading = null; // Promise, prevents double injection
+            this._pdfembAssetsLoading = null; // Promise — prevents double injection
 
             this.debug = (...args) => {
                 if (this.options.debugMode) {
@@ -96,9 +96,19 @@
         }
 
         // -----------------------------------------------------------------------
-        // On-demand PDF Embedder asset loader
-        // Injects dequeued CSS + JS only when the user clicks "View PDF".
-        // All subsequent clicks reuse the same Promise (assets loaded once).
+        // On-demand PDF Embedder asset loader.
+        //
+        // Two sources are merged:
+        //   1. pdfLazyLoaderData.pdfembAssets  — assets dequeued at wp_enqueue_scripts
+        //      (collected by php pdf_lazy_loader_dequeue_pdfemb_assets)
+        //   2. window.pdfLazyLoaderLateAssets  — assets that PDF Embedder registered
+        //      inside shortcode render() AFTER wp_enqueue_scripts fired;
+        //      captured by php pdf_lazy_loader_filter_html_output via ob_start
+        //      and injected as a JS global before </head>.
+        //
+        // Without merging (2), fullscreen CSS/JS from newer pdf-embedder versions
+        // was silently dropped — causing the fullscreen overlay to render as a
+        // plain in-flow block at the bottom of the page.
         // -----------------------------------------------------------------------
         loadPDFEmbedderAssets() {
             if (this._pdfembAssetsLoaded) {
@@ -108,9 +118,28 @@
                 return this._pdfembAssetsLoading;
             }
 
-            const assets = (this.options.pdfembAssets) || { css: [], js: [] };
-            const cssUrls = Array.isArray(assets.css) ? assets.css : [];
-            const jsUrls  = Array.isArray(assets.js)  ? assets.js  : [];
+            // Helper: merge two arrays, keeping order and removing duplicates
+            const mergeUnique = (a, b) => {
+                const left  = Array.isArray(a) ? a : [];
+                const right = Array.isArray(b) ? b : [];
+                return Array.from(new Set([...left, ...right]));
+            };
+
+            // Source 1: early assets (dequeued at wp_enqueue_scripts time, PHP-injected via wp_localize_script)
+            const earlyAssets = (this.options.pdfembAssets && typeof this.options.pdfembAssets === 'object')
+                ? this.options.pdfembAssets
+                : { css: [], js: [] };
+
+            // Source 2: late assets (captured from ob_start HTML, PHP-injected as window global)
+            const lateAssets = (window.pdfLazyLoaderLateAssets && typeof window.pdfLazyLoaderLateAssets === 'object')
+                ? window.pdfLazyLoaderLateAssets
+                : { css: [], js: [] };
+
+            const cssUrls = mergeUnique(earlyAssets.css, lateAssets.css);
+            const jsUrls  = mergeUnique(earlyAssets.js,  lateAssets.js);
+
+            this.debug('loadPDFEmbedderAssets: early CSS', earlyAssets.css, 'late CSS', lateAssets.css);
+            this.debug('loadPDFEmbedderAssets: early JS',  earlyAssets.js,  'late JS',  lateAssets.js);
 
             if (cssUrls.length === 0 && jsUrls.length === 0) {
                 this._pdfembAssetsLoaded = true;
@@ -131,7 +160,7 @@
                     this.debug('loadPDFEmbedderAssets: injected CSS', href);
                 });
 
-                // 2. Inject JS sequentially (order matters for PDF.js worker → viewer)
+                // 2. Inject JS sequentially (order matters: PDF.js worker must load before viewer)
                 const loadScript = (urls, index) => {
                     if (index >= urls.length) {
                         this._pdfembAssetsLoaded = true;
@@ -141,7 +170,6 @@
                         return;
                     }
                     const src = urls[index];
-                    // Skip if already loaded
                     if (!src || document.querySelector('script[src*="' + src.split('?')[0].split('/').pop() + '"]')) {
                         this.debug('loadPDFEmbedderAssets: JS already present, skipping', src);
                         loadScript(urls, index + 1);
@@ -664,7 +692,7 @@
             if (encPdf) storedPdfUrl  = this.decryptURL(encPdf)  || finalPdfUrl;
             if (encSrc) storedOrigSrc = this.decryptURL(encSrc)  || originalSrc;
 
-            // Load dequeued PDF Embedder assets on first click, then show PDF
+            // Load all PDF Embedder assets (early + late) on first click, then show PDF
             this.loadPDFEmbedderAssets()
                 .then(() => this.loadPDF(iframe, facade, storedPdfUrl, storedOrigSrc, wrapper));
         }
