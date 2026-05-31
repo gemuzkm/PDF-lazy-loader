@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.1.0
+# PDF Lazy Loader v1.1.1
 
 WordPress plugin that optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks. Protects PDF assets from bots by deferring all PDF-related resources until after user interaction and optional Cloudflare Turnstile verification.
 
@@ -12,6 +12,7 @@ WordPress plugin that optimizes PDF loading with lazy loading pattern for better
 - **Download Support**: Optional download button for PDF files
 - **Debug Mode**: Detailed console logging for troubleshooting
 - **Server-Side Protection**: PHP content filters remove PDF URLs from HTML source before sending to browser
+- **WP 7.x Ready**: Uses `wp_add_inline_script()` instead of deprecated `wp_localize_script()`
 
 ## How It Works
 
@@ -83,7 +84,7 @@ PDF Embedder (especially premium versions) registers assets at multiple points i
 
 - **Layer 2 — `wp_footer:1`**: After `the_content` and all shortcodes have executed, scans **all** entries in `$wp_styles->registered` and `$wp_scripts->registered` using `pdf_lazy_loader_is_pdfemb_src()`. This is the definitive catch for `pdfemb-fullscreen.min.css` and similar assets that `Viewer::render()` registers only at shortcode execution time — after Layer 1 has already run.
 
-- **Layer 3 — `wp_footer:2`**: Outputs the final merged URL list as `window.pdfLazyLoaderLateAssets = {...}` before `</body>`. JavaScript reads this global at click time and merges it with the early list from `wp_localize_script`.
+- **Layer 3 — `wp_footer:2`**: Outputs the final merged URL list as `window.pdfLazyLoaderLateAssets = {...}` before `</body>`. JavaScript reads this global at click time and merges it with the early list from `wp_add_inline_script`.
 
 **Path-based detector** used by all layers:
 ```php
@@ -114,6 +115,10 @@ Called once when the user clicks "View PDF":
 - CSS is injected immediately (non-blocking); duplicates detected via `link.href.includes(filename)` — **no `CSS.escape()`** which was breaking dedup for filenames containing dots
 - JS scripts are loaded **sequentially** (`async=false`) to preserve PDF.js worker → viewer load order
 - Assets are injected only once — subsequent clicks skip injection
+
+### Data Passing to JavaScript (v1.1.1+)
+
+`wp_localize_script()` has been replaced with `wp_add_inline_script(..., 'before')` on both the frontend and admin scripts. This is the approach recommended by WordPress core since WP 5.7 and avoids a potential formal deprecation in WP 7.x. The generated output is identical — a `var pdfLazyLoaderData = {...};` block injected before the script tag.
 
 ### Server-Side Filtering
 
@@ -161,6 +166,11 @@ pdf-lazy-loader/
 - PDF Embedder (free or premium) installed and active
 
 ## Version History
+
+### v1.1.1
+- **Refactor**: Replaced `wp_localize_script()` with `wp_add_inline_script(..., 'before')` on both frontend (`pdfLazyLoaderData`) and admin (`pdfLazyLoaderAdmin`) scripts — forward-compatible with WP 7.x
+- **Updated**: `Tested up to: 6.7` → `6.8`
+- **Updated**: README — added "WP 7.x Ready" feature note, new "Data Passing to JavaScript" technical section
 
 ### v1.1.0
 - **Fix**: `pdfemb-fullscreen.min.css` (and all other PDFEmbedder-premium assets registered inside shortcode `render()`) now guaranteed to load on click

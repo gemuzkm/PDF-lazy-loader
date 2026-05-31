@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Optimizes PDF loading with lazy loading pattern for better performance and user experience.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -11,13 +11,13 @@
  * Text Domain: pdf-lazy-loader
  * Domain Path: /languages
  * Requires at least: 5.0
- * Tested up to: 6.7
+ * Tested up to: 6.8
  * Requires PHP: 7.2
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',    '1.1.0' );
+define( 'PDF_LAZY_LOADER_VERSION',    '1.1.1' );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'PDF_LAZY_LOADER_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -252,14 +252,12 @@ function pdf_lazy_loader_filter_html_output( $html ) {
         $merged_css = array_values( array_unique( array_merge( $existing['css'], $ob_css ) ) );
         $merged_js  = array_values( array_unique( array_merge( $existing['js'],  $ob_js  ) ) );
 
-        // Update the global (for any subsequent use)
         $GLOBALS['pdf_lazy_loader_pdfemb_assets'] = array( 'css' => $merged_css, 'js' => $merged_js );
 
         // Replace / update the window.pdfLazyLoaderLateAssets script already in HTML
         $json   = wp_json_encode( array( 'css' => $merged_css, 'js' => $merged_js ) );
         $script = '<script type="text/javascript">window.pdfLazyLoaderLateAssets=' . $json . ';</script>';
 
-        // Remove old injection if present, then re-inject before </body>
         $html = preg_replace( '#<script[^>]*>window\.pdfLazyLoaderLateAssets\s*=\s*[^<]+</script>#i', '', $html );
         $html = preg_replace( '#(</body>)#i', $script . '$1', $html, 1 );
     }
@@ -340,7 +338,13 @@ function pdf_lazy_loader_enqueue_admin_scripts( $hook ) {
     $settings = pdf_lazy_loader_get_settings();
     wp_enqueue_style(  'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/admin.css', array(), PDF_LAZY_LOADER_VERSION );
     wp_enqueue_script( 'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/admin.js',  array( 'jquery' ), PDF_LAZY_LOADER_VERSION, true );
-    wp_localize_script( 'pdf-lazy-loader-admin', 'pdfLazyLoaderAdmin', $settings );
+    // wp_add_inline_script() is preferred over wp_localize_script() since WP 5.7
+    // and avoids potential deprecation in WP 7.x
+    wp_add_inline_script(
+        'pdf-lazy-loader-admin',
+        'var pdfLazyLoaderAdmin = ' . wp_json_encode( $settings ) . ';',
+        'before'
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +524,13 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
 
         wp_enqueue_style(  'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css', array(), PDF_LAZY_LOADER_VERSION );
         wp_enqueue_script( 'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/pdf-lazy-loader.js',  array(), PDF_LAZY_LOADER_VERSION, true );
-        wp_localize_script( 'pdf-lazy-loader', 'pdfLazyLoaderData', $data );
+        // wp_add_inline_script() is preferred over wp_localize_script() since WP 5.7
+        // and avoids potential deprecation in WP 7.x
+        wp_add_inline_script(
+            'pdf-lazy-loader',
+            'var pdfLazyLoaderData = ' . wp_json_encode( $data ) . ';',
+            'before'
+        );
     }, 1000 );
 }
 
