@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_FILE: pdf-lazy-loader.php
+
+jobs:
+  lint:
+    name: PHP ${{ matrix.php }} syntax
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: php -l
+        run: |
+          set -e
+          find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+
+  js:
+    name: JavaScript syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: node --check
+        run: |
+          set -e
+          for f in assets/js/*.js; do echo "$f"; node --check "$f"; done
+
+  consistency:
+    name: Version & assets consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Header Version == PDF_LAZY_LOADER_VERSION == JS fallback
+        run: |
+          set -e
+          H=$(grep -m1 -E '^\s*\*?\s*Version:' "$PLUGIN_FILE" | sed -E 's/^\s*\*?\s*Version:\s*//; s/\s+$//')
+          C=$(grep -m1 -E "define\(\s*'PDF_LAZY_LOADER_VERSION'" "$PLUGIN_FILE" | sed -E "s/.*'PDF_LAZY_LOADER_VERSION',\s*'([^']+)'.*/\1/")
+          J=$(grep -m1 -E "raw\.version \|\| '[^']+'" assets/js/pdf-lazy-loader.js | sed -E "s/.*raw\.version \|\| '([^']+)'.*/\1/")
+          echo "header=$H const=$C js=$J"
+          [ "$H" = "$C" ] || { echo "::error::Version mismatch: header=$H const=$C"; exit 1; }
+          [ "$H" = "$J" ] || { echo "::error::Version mismatch: header=$H assets/js/pdf-lazy-loader.js=$J"; exit 1; }
+
+      - name: Changelog entry exists for current version
+        run: |
+          set -e
+          H=$(grep -m1 -E '^\s*\*?\s*Version:' "$PLUGIN_FILE" | sed -E 's/^\s*\*?\s*Version:\s*//; s/\s+$//')
+          grep -q "^### v${H}$" README.md || { echo "::error::README.md has no '### v${H}' changelog section"; exit 1; }
+
+      - name: Minified JS present and up to date
+        run: |
+          set -e
+          test -f assets/js/pdf-lazy-loader.min.js || { echo "::error::assets/js/pdf-lazy-loader.min.js is missing"; exit 1; }
+          SRC=$(git log -1 --format=%ct -- assets/js/pdf-lazy-loader.js)
+          MIN=$(git log -1 --format=%ct -- assets/js/pdf-lazy-loader.min.js)
+          [ "$MIN" -ge "$SRC" ] || { echo "::error::pdf-lazy-loader.min.js is older than pdf-lazy-loader.js — rebuild: npx terser assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js"; exit 1; }

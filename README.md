@@ -129,6 +129,9 @@ Path detector used everywhere:
 pdf-lazy-loader/
 ├── pdf-lazy-loader.php
 ├── README.md
+├── .github/workflows/
+│   ├── ci.yml
+│   └── release.yml
 └── assets/
     ├── css/
     │   ├── admin.css
@@ -211,6 +214,26 @@ Fixes for Google PageSpeed / Lighthouse findings:
 - Fixed PDF background loading
 - Removed unnecessary settings
 - All text in English
+
+## Development & Release
+
+CI (`.github/workflows/ci.yml`) runs on every push / PR to `main`: `php -l` on PHP 7.4–8.4, `node --check` for JS, version consistency (plugin header = `PDF_LAZY_LOADER_VERSION` = JS fallback), changelog entry `### vX.Y.Z` in README, and an up-to-date `pdf-lazy-loader.min.js`.
+
+Rebuild the minified JS after editing `assets/js/pdf-lazy-loader.js`:
+
+```bash
+npx terser assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js
+```
+
+Release (`.github/workflows/release.yml`) is triggered by a `vX.Y.Z` tag. It verifies that the tag matches the plugin version, builds `pdf-lazy-loader-X.Y.Z.zip` (folder `pdf-lazy-loader/`, without `.git`/`.github`) plus `.sha256`, and publishes a GitHub Release with the notes from the matching `### vX.Y.Z` README section.
+
+```bash
+# 1. bump Version: header, PDF_LAZY_LOADER_VERSION, JS fallback; add "### vX.Y.Z" to README
+# 2. commit & push to main, wait for green CI
+git pull
+git tag -a v1.2.1 -m "PDF Lazy Loader 1.2.1"
+git push origin v1.2.1
+```
 
 ## License
 

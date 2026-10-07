@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_SLUG: pdf-lazy-loader
+  PLUGIN_FILE: pdf-lazy-loader.php
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+
+      - name: PHP syntax check
+        run: |
+          set -e
+          find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+
+      - name: JS syntax check
+        run: |
+          set -e
+          for f in assets/js/*.js; do node --check "$f"; done
+
+      - name: Read plugin version
+        id: meta
+        run: |
+          set -e
+          HEADER_VERSION=$(grep -m1 -E '^\s*\*?\s*Version:' "${PLUGIN_FILE}" | sed -E 's/^\s*\*?\s*Version:\s*//; s/\s+$//')
+          CONST_VERSION=$(grep -m1 -E "define\(\s*'PDF_LAZY_LOADER_VERSION'" "${PLUGIN_FILE}" | sed -E "s/.*'PDF_LAZY_LOADER_VERSION',\s*'([^']+)'.*/\1/")
+          echo "Header version: ${HEADER_VERSION}"
+          echo "Const  version: ${CONST_VERSION}"
+          if [ "${HEADER_VERSION}" != "${CONST_VERSION}" ]; then
+            echo "::error::Plugin header Version (${HEADER_VERSION}) does not match PDF_LAZY_LOADER_VERSION (${CONST_VERSION})"
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "${TAG_VERSION}" != "${HEADER_VERSION}" ]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match plugin Version ${HEADER_VERSION}"
+              exit 1
+            fi
+          fi
+          echo "version=${HEADER_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify minified JS is present
+        run: test -f assets/js/pdf-lazy-loader.min.js || { echo "::error::assets/js/pdf-lazy-loader.min.js is missing"; exit 1; }
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          set -e
+          VERSION="${{ steps.meta.outputs.version }}"
+          NOTES=$(awk -v v="### v${VERSION}" '
+            $0 == v {flag=1; next}
+            /^### v/ && flag {exit}
+            /^## / && flag {exit}
+            flag {print}
+          ' README.md | sed -e '/./,$!d')
+          if [ -z "${NOTES}" ]; then
+            NOTES="See README.md for details."
+          fi
+          {
+            echo "notes<<EOF"
+            echo "${NOTES}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin ZIP
+        id: build
+        run: |
+          set -e
+          VERSION="${{ steps.meta.outputs.version }}"
+          BUILD_DIR="$(mktemp -d)"
+          STAGE="${BUILD_DIR}/${PLUGIN_SLUG}"
+          mkdir -p "${STAGE}"
+          rsync -a ./ "${STAGE}/" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.gitignore' \
+            --exclude '.gitattributes' \
+            --exclude '.editorconfig' \
+            --exclude 'work' \
+            --exclude 'node_modules' \
+            --exclude '*.zip'
+          ZIP_NAME="${PLUGIN_SLUG}-${VERSION}.zip"
+          (cd "${BUILD_DIR}" && zip -rq "${GITHUB_WORKSPACE}/${ZIP_NAME}" "${PLUGIN_SLUG}")
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          unzip -l "${ZIP_NAME}"
+          echo "zip=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.zip }}
+          path: |
+            ${{ steps.build.outputs.zip }}
+            ${{ steps.build.outputs.zip }}.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          name: PDF Lazy Loader ${{ steps.meta.outputs.version }}
+          body: ${{ steps.changelog.outputs.notes }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.build.outputs.zip }}
+            ${{ steps.build.outputs.zip }}.sha256
+          fail_on_unmatched_files: true
