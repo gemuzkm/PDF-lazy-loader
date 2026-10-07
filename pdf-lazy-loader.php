@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.0
+ * Version: 1.3.1
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.0' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.1' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -555,6 +555,10 @@ function pdf_lazy_loader_server_timing( $t ) {
 function pdf_lazy_loader_rest_verify( WP_REST_Request $request ) {
     $t0     = microtime( true );
     $timing = array();
+    // WordPress + plugins bootstrap before this handler (not plugin code)
+    if ( ! empty( $_SERVER['REQUEST_TIME_FLOAT'] ) ) {
+        $timing['wp_boot'] = ( $t0 - (float) $_SERVER['REQUEST_TIME_FLOAT'] ) * 1000;
+    }
     $t      = pdf_lazy_loader_get_i18n();
 
     if ( ! pdf_lazy_loader_server_verify_active() ) {

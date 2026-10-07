@@ -24,7 +24,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.0',
+            version:          raw.version || '1.3.1',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
@@ -311,6 +311,7 @@
         showSpinner(wrapper) {
             const content = wrapper.querySelector('.pdf-facade-content');
             if (!content || content.querySelector('.pdf-loading-spinner')) return;
+            wrapper._pllSpinStart = performance.now();
             content.classList.add('is-loading');
             const sp = document.createElement('div');
             sp.className = 'pdf-loading-spinner';
@@ -370,6 +371,7 @@
             content.classList.remove('is-loading');
             const sp = content.querySelector('.pdf-loading-spinner');
             if (sp) sp.remove();
+            wrapper._pllSpinStart = 0;
             const btns = content.querySelector('.pdf-facade-buttons');
             const info = content.querySelector('.pdf-facade-info');
             if (btns) btns.hidden = false;
@@ -439,8 +441,11 @@
             wrapper.classList.add('is-busy');
             this.showSpinner(wrapper);
 
-            // Asset download and the minimum spinner time run in parallel
-            const minDelay = new Promise(r => setTimeout(r, this.options.loadingTime));
+            // Asset download and the minimum spinner time run in parallel; the
+            // minimum counts from the moment the spinner appeared (server verify
+            // time is already part of it).
+            const shown = wrapper._pllSpinStart ? performance.now() - wrapper._pllSpinStart : 0;
+            const minDelay = new Promise(r => setTimeout(r, Math.max(0, this.options.loadingTime - shown)));
             Promise.all([this.loadPDFEmbedderAssets().catch(() => {}), minDelay]).then(() => {
                 wrapper.remove();
                 iframe.classList.remove('pll-iframe-hidden');
@@ -537,7 +542,19 @@
                 msg.classList.remove('is-error');
                 const fail = text => { msg.textContent = text; msg.classList.add('is-error'); };
 
-                const restore = () => { box.remove(); if (btns) btns.hidden = false; if (info) info.hidden = false; };
+                // Widget is removed through the Turnstile API (not just DOM removal),
+                // otherwise api.js keeps polling it: "Cannot find Widget …".
+                const restore = () => {
+                    box.hidden = true;
+                    if (btns) btns.hidden = false;
+                    if (info) info.hidden = false;
+                    const wid = wrapper.getAttribute('data-turnstile-widget-id');
+                    wrapper.removeAttribute('data-turnstile-widget-id');
+                    setTimeout(() => {
+                        if (wid && typeof turnstile !== 'undefined') { try { turnstile.remove(wid); } catch (_) {} }
+                        box.remove();
+                    }, 0);
+                };
 
                 const eid = wrapper.getAttribute('data-turnstile-widget-id');
                 if (eid) {

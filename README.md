@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.3.0
+# PDF Lazy Loader v1.3.1
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -104,7 +104,8 @@ Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `
 | Rate limit | 20 req/min/IP (filter `pdf_lazy_loader_verify_rate_limit`) — only when a persistent object cache (Redis/Memcached) is present; without it no limit is applied, to avoid DB writes |
 
 Notes:
-- If Cloudflare WAF filters REST on your site, allow `POST /wp-json/pdf-lazy-loader/v1/verify`. The endpoint answers with `Cache-Control: no-store` and a `Server-Timing` header (`decrypt`, `siteverify`, `total`) visible in DevTools.
+- If Cloudflare WAF filters REST on your site, allow `POST /wp-json/pdf-lazy-loader/v1/verify`. The endpoint answers with `Cache-Control: no-store` and a `Server-Timing` header (`wp_boot` — WordPress + plugins bootstrap before the handler, `decrypt`, `siteverify`, `total` — plugin handler) visible in DevTools. If the browser-side time is much larger than `wp_boot + total`, the rest is network / proxy (e.g. Cloudflare) time.
+- Turnstile needs `https://challenges.cloudflare.com` in CSP `script-src` and `frame-src` (if your site sends a Content-Security-Policy).
 - Rotating WordPress salts invalidates refs in already cached pages — visitors see "This page is outdated. Please reload it." until the cache is purged.
 - The PDF file itself stays a public static file: anyone who already knows its URL can download it. Server-side mode prevents extracting the URL from the page, it is not an access control on `wp-content/uploads`.
 
@@ -192,6 +193,11 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.3.1
+- Turnstile widget is removed via `turnstile.remove()` after success (fixes console warning "Cannot find Widget …, consider using turnstile.remove()")
+- Minimum spinner time counts from the moment the spinner appeared, so server verification time is no longer added on top of it
+- `Server-Timing`: new `wp_boot` metric (WordPress bootstrap before the handler)
 
 ### v1.3.0
 - **Server-side Turnstile verification** (optional, Settings → Cloudflare Turnstile → *Server-side verification*): REST endpoint `POST /wp-json/pdf-lazy-loader/v1/verify` validates the token with Cloudflare `siteverify` (single-use, action `pdf_view`, hostname check) and only then returns the PDF URLs
