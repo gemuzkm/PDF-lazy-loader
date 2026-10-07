@@ -1,7 +1,8 @@
-/* PDF Lazy Loader v1.2.0 — facade styles
+/* PDF Lazy Loader v1.2.1 — facade styles
  * Colors and heights come from CSS custom properties printed by PHP
  * (wp_add_inline_style): --pll-btn, --pll-btn-hover, --pll-h-desktop,
- * --pll-h-tablet, --pll-h-mobile. Fallbacks below match plugin defaults.
+ * --pll-h-tablet, --pll-h-mobile. Fallbacks match the default colors after WCAG AA adjustment.
+ * All text colors meet 4.5:1 on the facade background (#e9ecef darkest stop).
  */
 
 .pll-iframe-hidden {
@@ -66,8 +67,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--pll-btn, #FF6B6B);
-    color: #fff;
+    background: var(--pll-btn, #C25151);
+    color: var(--pll-btn-text, #fff);
     font: 700 32px/1 sans-serif;
     box-shadow: 0 4px 12px rgba(0, 0, 0, .15);
 }
@@ -82,13 +83,13 @@
 
 .pdf-facade-subtitle {
     margin: 0 0 20px;
-    color: #666;
+    color: #4a4a4a;
     font-size: 14px;
 }
 
 .pdf-facade-info {
     margin: 20px 0 0;
-    color: #999;
+    color: #575757;
     font-size: 13px;
 }
 
@@ -120,14 +121,14 @@
 }
 
 .pdf-facade-wrapper .pdf-view-button {
-    background: var(--pll-btn, #FF6B6B);
-    color: #fff;
+    background: var(--pll-btn, #C25151);
+    color: var(--pll-btn-text, #fff);
     border: none;
 }
 
 .pdf-facade-wrapper .pdf-view-button:hover,
 .pdf-facade-wrapper .pdf-view-button:focus-visible {
-    background: var(--pll-btn-hover, #E63946);
+    background: var(--pll-btn-hover, #A54545);
     transform: translateY(-2px);
 }
 
@@ -145,7 +146,7 @@
 
 .pdf-facade-wrapper .pdf-view-button:focus-visible,
 .pdf-facade-wrapper .pdf-download-button:focus-visible {
-    outline: 2px solid var(--pll-btn-hover, #E63946);
+    outline: 2px solid var(--pll-btn-hover, #A54545);
     outline-offset: 2px;
 }
 
@@ -168,13 +169,13 @@
     width: 40px;
     height: 40px;
     border: 3px solid rgba(0, 0, 0, .08);
-    border-top-color: var(--pll-btn, #FF6B6B);
+    border-top-color: var(--pll-btn, #C25151);
     border-radius: 50%;
     animation: pdf-spin .8s linear infinite;
 }
 
 .pdf-loading-text {
-    color: #666;
+    color: #4a4a4a;
     font-size: 13px;
 }
 
@@ -199,13 +200,13 @@
 
 .pdf-turnstile-message {
     margin: 0 0 15px;
-    color: #666;
+    color: #4a4a4a;
     font-size: 14px;
     text-align: center;
 }
 
 .pdf-turnstile-message.is-error {
-    color: #e63946;
+    color: #b3261e;
 }
 
 .pdf-turnstile-container iframe {

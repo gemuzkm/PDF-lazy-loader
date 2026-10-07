@@ -119,6 +119,36 @@
     }
 
 
+    // Same WCAG AA adjustment as PHP pdf_lazy_loader_accessible_colors()
+    function hexToRgb(hex) {
+        hex = String(hex || '').replace('#', '');
+        if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        if (!/^[0-9a-f]{6}$/i.test(hex)) return null;
+        return [parseInt(hex.substr(0, 2), 16), parseInt(hex.substr(2, 2), 16), parseInt(hex.substr(4, 2), 16)];
+    }
+    function rgbToHex(rgb) {
+        return '#' + rgb.map(function (v) { v = Math.max(0, Math.min(255, Math.round(v))); return (v < 16 ? '0' : '') + v.toString(16); }).join('').toUpperCase();
+    }
+    function luminance(rgb) {
+        var c = rgb.map(function (v) { v = v / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    }
+    function contrastWhite(rgb) { return 1.05 / (luminance(rgb) + 0.05); }
+    function darken(rgb) {
+        var base = rgb.slice(), out = rgb.slice();
+        for (var k = 0; k <= 1.0001 && contrastWhite(out) < 4.5; k += 0.02) {
+            out = [base[0] * (1 - k), base[1] * (1 - k), base[2] * (1 - k)];
+        }
+        return out;
+    }
+    function accessibleColors(btn, hover) {
+        var b = hexToRgb(btn) || [255, 107, 107], h = hexToRgb(hover) || [230, 57, 70];
+        var b2 = darken(b), h2 = darken(h);
+        if (Math.abs(luminance(h2) - luminance(b2)) < 0.02) h2 = [b2[0] * 0.85, b2[1] * 0.85, b2[2] * 0.85];
+        var bh = rgbToHex(b2), hh = rgbToHex(h2);
+        return { btn: bh, hover: hh, adjusted: bh !== rgbToHex(b) || hh !== rgbToHex(h) };
+    }
+
     function getCurrentSettings() {
         return {
             buttonColor: $('input[name="pdf_lazy_loader_button_color"]').val() || '#FF6B6B',
@@ -148,7 +178,9 @@
         var $previewContainer = $('#pdf-lazy-loader-preview');
         if ($previewContainer.length === 0) return;
 
-        var settings = getCurrentSettings();
+        var raw = getCurrentSettings();
+        var ac  = accessibleColors(raw.buttonColor, raw.buttonColorHover);
+        var settings = $.extend({}, raw, { buttonColor: ac.btn, buttonColorHover: ac.hover });
 
         var sampleHTML = '<div class="pdf-facade-wrapper" style="width: 100%; margin-bottom: 0;">' +
             '<div class="pdf-facade-container" style="' +
@@ -173,19 +205,19 @@
             '">' +
             '<div class="pdf-facade-icon" style="margin-bottom: 20px;">' +
             '<svg width="64" height="80" viewBox="0 0 64 80" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-            '<rect x="4" y="4" width="56" height="72" rx="2" fill="' + settings.buttonColor + '" stroke="#C92A2A" stroke-width="2"/>' +
+            '<rect x="4" y="4" width="56" height="72" rx="2" fill="' + settings.buttonColor + '" stroke="' + settings.buttonColorHover + '" stroke-width="2"/>' +
             '<text x="32" y="48" font-size="24" font-weight="bold" fill="white" text-anchor="middle">PDF</text>' +
             '</svg>' +
             '</div>' +
-            '<h3 class="pdf-facade-title" style="' +
+            '<div class="pdf-facade-title" style="' +
             'margin: 0 0 10px 0;' +
             'color: #333;' +
             'font-size: 18px;' +
             'font-weight: 600;' +
-            '">PDF Document</h3>' +
+            '">PDF Document</div>' +
             '<p class="pdf-facade-subtitle" style="' +
             'margin: 0 0 20px 0;' +
-            'color: #666;' +
+            'color: #4a4a4a;' +
             'font-size: 14px;' +
             '">Click the button below to load</p>' +
             '<div class="pdf-facade-buttons" style="' +
@@ -223,6 +255,11 @@
         }
 
         sampleHTML += '</div></div></div></div>';
+
+        if (ac.adjusted) {
+            sampleHTML += '<p class="description" style="margin-top:10px">' +
+                'Colors were darkened for WCAG AA contrast with white text: button ' + ac.btn + ', hover ' + ac.hover + '.</p>';
+        }
 
         $previewContainer.html(sampleHTML);
 

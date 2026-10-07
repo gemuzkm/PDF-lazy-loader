@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.2.0
+# PDF Lazy Loader v1.2.1
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -11,6 +11,8 @@ WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behi
 - **Cloudflare Turnstile**: optional client-side verification before the PDF loads (widget script is also preloaded on intent)
 - **URL obfuscation**: iframe `src` is replaced by an XOR + Base64 copy in `data-pdf-lazy-original-src-enc`
 - **Responsive facade**: heights per breakpoint via CSS custom properties and `@media` (no resize listeners)
+- **Accessible by default (WCAG AA)**: button/icon colors are auto-darkened (same hue) until white text reaches 4.5:1; all facade texts meet 4.5:1; no heading tags in the facade (does not break the page heading outline)
+- **No render-blocking request**: facade CSS (~3 KB) is inlined in `<head>`; frontend JS is minified (`pdf-lazy-loader.min.js`, ~4 KB gzip) and deferred
 - **Download button** (optional), **Debug mode**, translatable strings (`pdf-lazy-loader` text domain)
 - **WordPress 7.x**: tested up to 7.1, requires PHP 7.4+, script tags via `wp_get_inline_script_tag()` (CSP-nonce friendly), frontend JS with `defer` strategy
 
@@ -47,7 +49,7 @@ Viewer CSS/JS (and Turnstile `api.js`, when enabled) start downloading in the ba
 
 | Setting | Description | Default |
 |---|---|---|
-| Button Color | Color of the "View PDF" button and PDF icon | `#FF6B6B` |
+| Button Color | Color of the "View PDF" button and PDF icon (auto-darkened for contrast if needed: `#FF6B6B` → `#C25151`) | `#FF6B6B` |
 | Button Hover Color | Color on hover / focus | `#E63946` |
 | Minimum Loading Time | Minimum spinner time in ms (0–5000), runs in parallel with asset loading | `300` |
 | Show Download Button | Enable/disable the download button | Off |
@@ -113,6 +115,8 @@ Path detector used everywhere:
 | Filter | Purpose |
 |---|---|
 | `pdf_lazy_loader_has_pdf` | Override page-level PDF detection (`bool`) |
+| `pdf_lazy_loader_enforce_contrast` | `false` — use button colors exactly as entered (no WCAG adjustment) |
+| `pdf_lazy_loader_inline_css` | `false` — load `pdf-lazy-loader.css` as an external file instead of inlining |
 
 ### Content filters
 
@@ -131,7 +135,8 @@ pdf-lazy-loader/
     │   └── pdf-lazy-loader.css
     └── js/
         ├── admin.js
-        └── pdf-lazy-loader.js
+        ├── pdf-lazy-loader.js
+        └── pdf-lazy-loader.min.js   (used unless SCRIPT_DEBUG)
 ```
 
 ## Requirements
@@ -141,6 +146,15 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.2.1
+Fixes for Google PageSpeed / Lighthouse findings:
+- **Accessibility — color contrast**: button and PDF icon colors are darkened (hue preserved) until white text reaches WCAG AA 4.5:1 (default `#FF6B6B` → `#C25151`, hover `#E63946` → `#A54545`); subtitle / info / loading / Turnstile texts darkened to ≥ 4.5:1 on the facade background. Admin preview shows the effective colors
+- **Accessibility — heading order**: facade title is not a heading (`<h3>` removed in 1.2.0, admin preview aligned)
+- **Performance — render-blocking request**: `pdf-lazy-loader.css` is inlined (minified) instead of a separate `<link>`
+- **Performance — network dependency tree**: minified `pdf-lazy-loader.min.js` (24 KB → 13 KB, ~4 KB gzip), still `defer` in footer
+- **Performance — LCP render delay**: facade is server-rendered (since 1.2.0), so the LCP text is painted with the first frame
+- New filters: `pdf_lazy_loader_enforce_contrast`, `pdf_lazy_loader_inline_css`
 
 ### v1.2.0
 - **Compatibility**: `Tested up to: 7.1`, `Requires PHP: 7.4`, `Requires at least: 5.7`; inline scripts via `wp_get_inline_script_tag()`

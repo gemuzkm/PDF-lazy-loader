@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.2.0' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.2.1' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -634,6 +634,85 @@ function pdf_lazy_loader_add_inline_script() {
 }
 
 // ---------------------------------------------------------------------------
+// Inline facade CSS — read once per request, comments/whitespace stripped.
+// ---------------------------------------------------------------------------
+function pdf_lazy_loader_get_inline_css() {
+    static $css = null;
+    if ( $css !== null ) return $css;
+    $file = PDF_LAZY_LOADER_PLUGIN_DIR . 'assets/css/pdf-lazy-loader.css';
+    $css  = is_readable( $file ) ? (string) file_get_contents( $file ) : ''; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+    $css  = preg_replace( '#/\*.*?\*/#s', '', $css );
+    $css  = preg_replace( '/\s+/', ' ', $css );
+    $css  = preg_replace( '/\s*([{}:;,>])\s*/', '$1', $css );
+    $css  = str_replace( ';}', '}', trim( $css ) );
+    return $css;
+}
+
+// ---------------------------------------------------------------------------
+// WCAG 2.x contrast helpers. Button / icon text is white; if the configured
+// color does not reach 4.5:1 against white it is darkened (mixed with black,
+// hue preserved) until it does. Hover color is guaranteed to pass as well and
+// to stay visibly different from the base color.
+// Filter 'pdf_lazy_loader_enforce_contrast' => false keeps colors as entered.
+// ---------------------------------------------------------------------------
+function pdf_lazy_loader_hex_to_rgb( $hex ) {
+    $hex = ltrim( (string) $hex, '#' );
+    if ( strlen( $hex ) === 3 ) $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+    if ( ! preg_match( '/^[0-9a-f]{6}$/i', $hex ) ) return null;
+    return array( hexdec( substr( $hex, 0, 2 ) ), hexdec( substr( $hex, 2, 2 ) ), hexdec( substr( $hex, 4, 2 ) ) );
+}
+
+function pdf_lazy_loader_rgb_to_hex( $rgb ) {
+    return sprintf( '#%02X%02X%02X', max( 0, min( 255, (int) round( $rgb[0] ) ) ), max( 0, min( 255, (int) round( $rgb[1] ) ) ), max( 0, min( 255, (int) round( $rgb[2] ) ) ) );
+}
+
+function pdf_lazy_loader_luminance( $rgb ) {
+    $c = array();
+    foreach ( $rgb as $v ) {
+        $v   = $v / 255;
+        $c[] = $v <= 0.03928 ? $v / 12.92 : pow( ( $v + 0.055 ) / 1.055, 2.4 );
+    }
+    return 0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2];
+}
+
+function pdf_lazy_loader_contrast_with_white( $rgb ) {
+    return 1.05 / ( pdf_lazy_loader_luminance( $rgb ) + 0.05 );
+}
+
+function pdf_lazy_loader_darken_to_contrast( $rgb, $min = 4.5 ) {
+    $base = $rgb;
+    for ( $k = 0; $k <= 1.0001 && pdf_lazy_loader_contrast_with_white( $rgb ) < $min; $k += 0.02 ) {
+        $rgb = array( $base[0] * ( 1 - $k ), $base[1] * ( 1 - $k ), $base[2] * ( 1 - $k ) );
+    }
+    return $rgb;
+}
+
+function pdf_lazy_loader_accessible_colors( $btn, $hover ) {
+    $b = pdf_lazy_loader_hex_to_rgb( sanitize_hex_color( $btn ) ?: '#FF6B6B' );
+    $h = pdf_lazy_loader_hex_to_rgb( sanitize_hex_color( $hover ) ?: '#E63946' );
+    if ( ! $b ) $b = array( 255, 107, 107 );
+    if ( ! $h ) $h = array( 230, 57, 70 );
+
+    if ( ! apply_filters( 'pdf_lazy_loader_enforce_contrast', true ) ) {
+        return array( 'btn' => pdf_lazy_loader_rgb_to_hex( $b ), 'hover' => pdf_lazy_loader_rgb_to_hex( $h ), 'adjusted' => false );
+    }
+
+    $b2 = pdf_lazy_loader_darken_to_contrast( $b );
+    $h2 = pdf_lazy_loader_darken_to_contrast( $h );
+    // Hover must differ noticeably from the base color
+    if ( abs( pdf_lazy_loader_luminance( $h2 ) - pdf_lazy_loader_luminance( $b2 ) ) < 0.02 ) {
+        $h2 = array( $b2[0] * 0.85, $b2[1] * 0.85, $b2[2] * 0.85 );
+    }
+    $btn_hex   = pdf_lazy_loader_rgb_to_hex( $b2 );
+    $hover_hex = pdf_lazy_loader_rgb_to_hex( $h2 );
+    return array(
+        'btn'      => $btn_hex,
+        'hover'    => $hover_hex,
+        'adjusted' => $btn_hex !== pdf_lazy_loader_rgb_to_hex( $b ) || $hover_hex !== pdf_lazy_loader_rgb_to_hex( $h ),
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Frontend enqueue (wp_enqueue_scripts:1000, right after Layer 1)
 // ---------------------------------------------------------------------------
 function pdf_lazy_loader_enqueue_frontend_scripts() {
@@ -649,23 +728,33 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
         'i18n'         => pdf_lazy_loader_get_i18n(),
     ) );
 
-    wp_enqueue_style( 'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css', array(), PDF_LAZY_LOADER_VERSION );
-
-    // Colors and responsive facade heights as CSS custom properties —
-    // no inline style recalculation / resize listeners in JS.
-    $color = sanitize_hex_color( $settings['buttonColor'] )      ?: '#FF6B6B';
-    $hover = sanitize_hex_color( $settings['buttonColorHover'] ) ?: '#E63946';
-    wp_add_inline_style( 'pdf-lazy-loader', sprintf(
-        ':root{--pll-btn:%s;--pll-btn-hover:%s;--pll-h-desktop:%dpx;--pll-h-tablet:%dpx;--pll-h-mobile:%dpx}',
-        $color, $hover,
+    // Facade CSS (~3 KB minified) is INLINED — no extra render-blocking request.
+    // The facade is server-rendered, so its styles must be available at first paint.
+    // Filter 'pdf_lazy_loader_inline_css' => false restores the external file.
+    $colors = pdf_lazy_loader_accessible_colors( $settings['buttonColor'], $settings['buttonColorHover'] );
+    $vars   = sprintf(
+        ':root{--pll-btn:%s;--pll-btn-hover:%s;--pll-btn-text:#fff;--pll-h-desktop:%dpx;--pll-h-tablet:%dpx;--pll-h-mobile:%dpx}',
+        $colors['btn'], $colors['hover'],
         max( 200, $settings['facadeHeightDesktop'] ),
         max( 200, $settings['facadeHeightTablet'] ),
         max( 200, $settings['facadeHeightMobile'] )
-    ) );
+    );
 
+    if ( apply_filters( 'pdf_lazy_loader_inline_css', true ) ) {
+        wp_register_style( 'pdf-lazy-loader', false, array(), PDF_LAZY_LOADER_VERSION );
+        wp_enqueue_style( 'pdf-lazy-loader' );
+        wp_add_inline_style( 'pdf-lazy-loader', pdf_lazy_loader_get_inline_css() . $vars );
+    } else {
+        wp_enqueue_style( 'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css', array(), PDF_LAZY_LOADER_VERSION );
+        wp_add_inline_style( 'pdf-lazy-loader', $vars );
+    }
+
+    // Minified bundle unless SCRIPT_DEBUG
+    $js_file = ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) || ! file_exists( PDF_LAZY_LOADER_PLUGIN_DIR . 'assets/js/pdf-lazy-loader.min.js' )
+        ? 'pdf-lazy-loader.js' : 'pdf-lazy-loader.min.js';
     wp_enqueue_script(
         'pdf-lazy-loader',
-        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/pdf-lazy-loader.js',
+        PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/' . $js_file,
         array(),
         PDF_LAZY_LOADER_VERSION,
         array( 'in_footer' => true, 'strategy' => 'defer' )
@@ -698,7 +787,7 @@ function pdf_lazy_loader_settings_page() {
                                 <input type="color" id="pdf_lazy_loader_button_color" name="pdf_lazy_loader_button_color" value="<?php echo esc_attr( $settings['buttonColor'] ); ?>" />
                                 <code class="pll-color-value" id="pll-color-val-main"><?php echo esc_html( $settings['buttonColor'] ); ?></code>
                             </div>
-                            <span class="description">Color of the "View PDF" button</span>
+                            <span class="description">Color of the "View PDF" button and PDF icon. If white text on this color is below WCAG AA contrast (4.5:1), the frontend automatically uses a darker shade of the same hue.</span>
                         </td>
                     </tr>
                     <tr>
@@ -708,7 +797,7 @@ function pdf_lazy_loader_settings_page() {
                                 <input type="color" id="pdf_lazy_loader_button_color_hover" name="pdf_lazy_loader_button_color_hover" value="<?php echo esc_attr( $settings['buttonColorHover'] ); ?>" />
                                 <code class="pll-color-value" id="pll-color-val-hover"><?php echo esc_html( $settings['buttonColorHover'] ); ?></code>
                             </div>
-                            <span class="description">Color on mouse hover</span>
+                            <span class="description">Color on mouse hover / keyboard focus (contrast is enforced the same way)</span>
                         </td>
                     </tr>
                     <tr>
