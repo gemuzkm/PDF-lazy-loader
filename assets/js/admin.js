@@ -53,8 +53,8 @@
             }
 
             var loadingTime = parseInt($form.find('input[name="pdf_lazy_loader_loading_time"]').val(), 10);
-            if (isNaN(loadingTime) || loadingTime < 500 || loadingTime > 5000) {
-                alert('Loading time must be between 500 and 5000 ms');
+            if (isNaN(loadingTime) || loadingTime < 0 || loadingTime > 5000) {
+                alert('Loading time must be between 0 and 5000 ms');
                 e.preventDefault();
                 return false;
             }
@@ -123,7 +123,7 @@
         return {
             buttonColor: $('input[name="pdf_lazy_loader_button_color"]').val() || '#FF6B6B',
             buttonColorHover: $('input[name="pdf_lazy_loader_button_color_hover"]').val() || '#E63946',
-            loadingTime: parseInt($('input[name="pdf_lazy_loader_loading_time"]').val(), 10) || 1500,
+            loadingTime: (function (v) { return isNaN(v) ? 300 : v; })(parseInt($('input[name="pdf_lazy_loader_loading_time"]').val(), 10)),
             enableDownload: $('input[name="pdf_lazy_loader_enable_download"]').is(':checked')
         };
     }

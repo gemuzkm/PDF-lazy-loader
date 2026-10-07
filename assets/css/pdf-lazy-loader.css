@@ -1,136 +1,111 @@
+/* PDF Lazy Loader v1.2.0 — facade styles
+ * Colors and heights come from CSS custom properties printed by PHP
+ * (wp_add_inline_style): --pll-btn, --pll-btn-hover, --pll-h-desktop,
+ * --pll-h-tablet, --pll-h-mobile. Fallbacks below match plugin defaults.
+ */
 
-
-
-.pdf-loading-spinner {
-    position: relative;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin: 8px 0 0 0;
-    z-index: 10;
+.pll-iframe-hidden {
+    display: none !important;
 }
-
-.pdf-spinner {
-    width: 48px;
-    height: 48px;
-    border: 4px solid rgba(0, 0, 0, 0.08);
-    border-top-color: currentColor;
-    border-right-color: currentColor;
-    border-radius: 50%;
-    animation: pdf-spin 0.8s linear infinite;
-    color: inherit;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-@keyframes pdf-spin {
-    0% {
-        transform: rotate(0deg);
-    }
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-
-.pdf-spinner {
-    animation: pdf-spin 0.8s linear infinite;
-}
-
-.pdf-loading-text {
-    color: inherit;
-    font-size: 14px;
-    font-weight: 500;
-    margin: 0;
-    opacity: 0.8;
-    text-align: center;
-}
-
 
 .pdf-facade-wrapper {
     position: relative;
+    display: block;
+    width: 100%;
     margin: 0 auto 20px;
+    box-sizing: border-box;
 }
 
 .pdf-facade-container {
     position: relative;
     width: 100%;
-    height: 100%;
-    min-height: 400px;
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    border-radius: 8px;
+    height: var(--pll-h-mobile, 400px);
+    min-height: var(--pll-h-mobile, 400px);
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 40px 20px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    border-radius: 8px;
+    background: linear-gradient(to bottom, #f8f9fa 0%, #e9ecef 50%, #f8f9fa 100%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    contain: layout paint;
 }
 
+@media (min-width: 768px) {
+    .pdf-facade-container {
+        height: var(--pll-h-tablet, 500px);
+        min-height: var(--pll-h-tablet, 500px);
+    }
+}
 
 @media (min-width: 1024px) {
-    .pdf-facade-container[data-facade-height-desktop] {
-        height: var(--facade-height-desktop, 600px) !important;
-        min-height: var(--facade-height-desktop, 600px) !important;
+    .pdf-facade-container {
+        height: var(--pll-h-desktop, 600px);
+        min-height: var(--pll-h-desktop, 600px);
     }
 }
 
-
-@media (min-width: 768px) and (max-width: 1023px) {
-    .pdf-facade-container[data-facade-height-tablet] {
-        height: var(--facade-height-tablet, 500px) !important;
-        min-height: var(--facade-height-tablet, 500px) !important;
-    }
-}
-
-
-@media (max-width: 767px) {
-    .pdf-facade-container[data-facade-height-mobile] {
-        height: var(--facade-height-mobile, 400px) !important;
-        min-height: var(--facade-height-mobile, 400px) !important;
-    }
+.pdf-facade-content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
 }
 
 .pdf-facade-icon {
     width: 80px;
     height: 80px;
-    background: currentColor;
+    margin: 0 auto 20px;
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
+    background: var(--pll-btn, #FF6B6B);
     color: #fff;
-    font-size: 32px;
-    font-weight: 700;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font: 700 32px/1 sans-serif;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .15);
 }
 
 .pdf-facade-title {
+    margin: 0 0 10px;
+    color: #333;
     font-size: 20px;
     font-weight: 600;
-    color: #333;
-    margin-bottom: 8px;
-    text-align: center;
+    line-height: 1.3;
 }
 
-.pdf-facade-description {
-    font-size: 14px;
+.pdf-facade-subtitle {
+    margin: 0 0 20px;
     color: #666;
-    margin-bottom: 24px;
-    text-align: center;
+    font-size: 14px;
+}
+
+.pdf-facade-info {
+    margin: 20px 0 0;
+    color: #999;
+    font-size: 13px;
 }
 
 .pdf-facade-buttons {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
     justify-content: center;
 }
 
-.pdf-facade-button {
+.pdf-facade-buttons[hidden],
+.pdf-facade-info[hidden] {
+    display: none;
+}
+
+.pdf-facade-wrapper .pdf-view-button,
+.pdf-facade-wrapper .pdf-download-button {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -138,101 +113,129 @@
     border-radius: 6px;
     font-size: 14px;
     font-weight: 600;
-    text-decoration: none;
-    border: none;
+    line-height: 1.2;
     cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .1);
+    transition: background-color .2s ease, border-color .2s ease, transform .2s ease;
 }
 
-.pdf-facade-button:hover {
+.pdf-facade-wrapper .pdf-view-button {
+    background: var(--pll-btn, #FF6B6B);
+    color: #fff;
+    border: none;
+}
+
+.pdf-facade-wrapper .pdf-view-button:hover,
+.pdf-facade-wrapper .pdf-view-button:focus-visible {
+    background: var(--pll-btn-hover, #E63946);
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
-.pdf-facade-button:active {
-    transform: translateY(0);
-}
-
-.pdf-facade-button-view {
-    background: currentColor;
-    color: #fff;
-}
-
-.pdf-facade-button-download {
+.pdf-facade-wrapper .pdf-download-button {
     background: #fff;
-    color: currentColor;
-    border: 2px solid currentColor;
+    color: #333;
+    border: 2px solid #ddd;
 }
 
-.pdf-facade-button-download:hover {
-    background: currentColor;
-    color: #fff;
+.pdf-facade-wrapper .pdf-download-button:hover,
+.pdf-facade-wrapper .pdf-download-button:focus-visible {
+    background: #f5f5f5;
+    border-color: #bbb;
 }
 
+.pdf-facade-wrapper .pdf-view-button:focus-visible,
+.pdf-facade-wrapper .pdf-download-button:focus-visible {
+    outline: 2px solid var(--pll-btn-hover, #E63946);
+    outline-offset: 2px;
+}
 
+/* Loading state */
+.pdf-facade-content.is-loading .pdf-facade-subtitle,
+.pdf-facade-content.is-loading .pdf-facade-buttons,
+.pdf-facade-content.is-loading .pdf-facade-info {
+    display: none;
+}
+
+.pdf-loading-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.pdf-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(0, 0, 0, .08);
+    border-top-color: var(--pll-btn, #FF6B6B);
+    border-radius: 50%;
+    animation: pdf-spin .8s linear infinite;
+}
+
+.pdf-loading-text {
+    color: #666;
+    font-size: 13px;
+}
+
+@keyframes pdf-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pdf-spinner { animation-duration: 2s; }
+    .pdf-facade-wrapper .pdf-view-button, .pdf-facade-wrapper .pdf-download-button { transition: none; }
+    .pdf-facade-wrapper .pdf-view-button:hover { transform: none; }
+}
+
+/* Turnstile */
 .pdf-turnstile-container {
     margin: 20px 0;
     display: flex;
     flex-direction: column;
-    justify-content: center;
     align-items: center;
     min-height: 65px;
 }
 
-.pdf-turnstile-container .pdf-turnstile-message {
-    margin: 0 0 15px 0;
+.pdf-turnstile-message {
+    margin: 0 0 15px;
     color: #666;
     font-size: 14px;
     text-align: center;
-    width: 100%;
-    order: -1;
+}
+
+.pdf-turnstile-message.is-error {
+    color: #e63946;
 }
 
 .pdf-turnstile-container iframe {
     margin: 0 auto;
 }
 
-
 @media (max-width: 480px) {
     .pdf-facade-container {
-        min-height: 300px;
         padding: 30px 15px;
     }
-    
+
     .pdf-facade-icon {
         width: 60px;
         height: 60px;
         font-size: 24px;
         margin-bottom: 16px;
     }
-    
+
     .pdf-facade-title {
         font-size: 18px;
     }
-    
-    .pdf-facade-description {
-        font-size: 13px;
-    }
-    
+
     .pdf-facade-buttons {
         flex-direction: column;
         width: 100%;
     }
-    
-    .pdf-facade-button {
+
+    .pdf-facade-wrapper .pdf-view-button,
+    .pdf-facade-wrapper .pdf-download-button {
         width: 100%;
         justify-content: center;
     }
-    
-    .pdf-spinner {
-        width: 40px;
-        height: 40px;
-        border-width: 3px;
-    }
-    
-    .pdf-loading-text {
-        font-size: 13px;
-    }
 }
-

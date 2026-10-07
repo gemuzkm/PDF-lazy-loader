@@ -1,41 +1,45 @@
-# PDF Lazy Loader v1.1.1
+# PDF Lazy Loader v1.2.0
 
-WordPress plugin that optimizes PDF loading with lazy loading pattern for better performance and user experience. Replaces PDF iframes with a preview facade that loads the actual PDF only when user clicks. Protects PDF assets from bots by deferring all PDF-related resources until after user interaction and optional Cloudflare Turnstile verification.
+WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
 ## Features
 
-- **Lazy Loading**: PDFs load only when user clicks "View PDF" button
-- **3-Layer Asset Capture**: Guarantees all PDF Embedder CSS/JS (including `pdfemb-fullscreen.min.css` registered inside shortcodes) are captured and injected on-demand — regardless of when PDF Embedder registers them in the WordPress lifecycle
-- **URL Encryption**: PDF URLs are encrypted using XOR + Base64 to prevent scraping
-- **Cloudflare Turnstile**: Optional bot protection — verification is required before the PDF loads
-- **Responsive Facade**: Configurable placeholder heights for desktop, tablet, and mobile
-- **Download Support**: Optional download button for PDF files
-- **Debug Mode**: Detailed console logging for troubleshooting
-- **Server-Side Protection**: PHP content filters remove PDF URLs from HTML source before sending to browser
-- **WP 7.x Ready**: Uses `wp_add_inline_script()` instead of deprecated `wp_localize_script()`
+- **Server-rendered facade**: the placeholder is part of the HTML (`the_content` filter) — visible before any JS runs, no layout shift (CLS), page-cache friendly
+- **Zero PDF assets on page load**: PDF Embedder CSS/JS (including `pdfemb-fullscreen.min.css` enqueued inside `Viewer::render()`) are captured and loaded only on click
+- **Localized data preserved**: `wp_localize_script()` / `wp_add_inline_script()` data attached to PDF Embedder handles (e.g. `pdfemb_trans`) is carried over, so deferred scripts work exactly as when loaded normally
+- **Fast click-to-view**: minimum spinner time runs *in parallel* with asset loading (default 300 ms); static viewer assets are preloaded on hover / focus / touch
+- **Cloudflare Turnstile**: optional client-side verification before the PDF loads (widget script is also preloaded on intent)
+- **URL obfuscation**: iframe `src` is replaced by an XOR + Base64 copy in `data-pdf-lazy-original-src-enc`
+- **Responsive facade**: heights per breakpoint via CSS custom properties and `@media` (no resize listeners)
+- **Download button** (optional), **Debug mode**, translatable strings (`pdf-lazy-loader` text domain)
+- **WordPress 7.x**: tested up to 7.1, requires PHP 7.4+, script tags via `wp_get_inline_script_tag()` (CSP-nonce friendly), frontend JS with `defer` strategy
 
 ## How It Works
 
 ### Page Load (before user interaction)
 
-1. **Layer 1** — `wp_enqueue_scripts:999`: PHP dequeues all known PDF Embedder style/script handles and scans the queue by src path
-2. **Layer 2** — `wp_footer:1`: After all shortcodes have executed, scans the entire `$wp_styles->registered` / `$wp_scripts->registered` by plugin directory path — catches late-registered assets like `pdfemb-fullscreen.min.css` that PDF Embedder enqueues inside `Viewer::render()`
-3. **Layer 3** — `wp_footer:2`: Outputs the final merged asset list as `window.pdfLazyLoaderLateAssets` inline script before `</body>`
-4. **ob_start buffer** — `template_redirect:1`: Strips any surviving PDF Embedder `<link>`/`<script>` tags from the HTML stream using a broad path-based regex
-5. PDF iframes are intercepted server-side and client-side — their `src` is encrypted and removed from HTML
-6. A lightweight facade placeholder is rendered instead of the PDF
+1. **Detection** — `pdf_lazy_loader_has_pdf_iframes()` checks every post of the main query (single pages, blog index, archives, search). Result is memoized per request (tri-state); pages without PDF are not touched at all — no CSS/JS/inline script from this plugin is printed there
+2. **`the_content:999`** — each PDF iframe gets its `src` removed (obfuscated copy kept in a data attribute), the class `pll-iframe-hidden`, and a server-side facade is printed right before it
+3. **Layer 1** — `wp_enqueue_scripts:999`: queued PDF Embedder styles/scripts are collected (final URL incl. `?ver=`, deps in order, localized data, inline before/after) and dequeued
+4. **Layer 2** — `wp_footer:1`: same collection after all shortcodes ran — catches `pdf-fullscreen` (`pdfemb-fullscreen.min.css`) enqueued inside `Viewer::render()`
+5. **ob_start** — `template_redirect:1`: one `preg_replace_callback` pass strips any PDF Embedder `<link>`/`<script src>` printed outside the queue and prints the final list once as `window.pdfLazyLoaderLateAssets` before `</body>` (Layer 3 `wp_footer:2` is used only as a fallback when the buffer is not active)
+6. The PDF Embedder viewer request itself (`/?pdfemb-data=…`, rendered inside the iframe) is never modified
 
-### On Click ("View PDF" button)
+### On Hover / Focus / Touch
 
-1. If Cloudflare Turnstile is enabled — verification widget appears first
-2. After successful verification (or immediately if Turnstile is disabled) — `loadPDFEmbedderAssets()` merges `pdfLazyLoaderData.pdfembAssets` (Layer 1) with `window.pdfLazyLoaderLateAssets` (Layers 2–3), then injects all CSS/JS into the DOM
-3. The iframe `src` is restored and the PDF loads normally
+Viewer CSS/JS (and Turnstile `api.js`, when enabled) start downloading in the background. The PDF file and the viewer iframe are **not** requested yet.
+
+### On Click ("View PDF")
+
+1. If Turnstile is enabled — the widget is shown first
+2. Viewer assets (already cached after preload) and the minimum spinner delay are awaited in parallel
+3. The facade is removed, the iframe `src` is restored — PDF Embedder works as usual, including fullscreen
 
 ## Installation
 
 1. Upload the plugin folder to `/wp-content/plugins/`
-2. Activate the plugin through the **Plugins** menu in WordPress
-3. Go to **Settings → PDF Lazy Loader** to configure
+2. Activate it in **Plugins**
+3. Configure it in **Settings → PDF Lazy Loader**
 
 ## Configuration
 
@@ -43,105 +47,77 @@ WordPress plugin that optimizes PDF loading with lazy loading pattern for better
 
 | Setting | Description | Default |
 |---|---|---|
-| Button Color | Color of the "View PDF" button | `#FF6B6B` |
-| Button Hover Color | Color on hover | `#E63946` |
-| Loading Animation Duration | Spinner duration in ms (500–5000) | `1500` |
-| Show Download Button | Enable/disable download functionality | Off |
+| Button Color | Color of the "View PDF" button and PDF icon | `#FF6B6B` |
+| Button Hover Color | Color on hover / focus | `#E63946` |
+| Minimum Loading Time | Minimum spinner time in ms (0–5000), runs in parallel with asset loading | `300` |
+| Show Download Button | Enable/disable the download button | Off |
+
+On upgrade from ≤ 1.1.1 the old default `1500` is migrated to `300` once; any other custom value is kept.
 
 ### Facade Heights
 
 | Breakpoint | Range | Default |
 |---|---|---|
-| Desktop | ≥1024px | 600px |
+| Desktop | ≥ 1024px | 600px |
 | Tablet | 768px – 1023px | 500px |
-| Mobile | <768px | 400px |
+| Mobile | < 768px | 400px |
 
 ### Cloudflare Turnstile
 
-- **Enable Turnstile**: Enable bot verification before PDF loads
-- **Turnstile Site Key**: Your Cloudflare Turnstile site key ([get it here](https://dash.cloudflare.com/?to=/:account/turnstile))
-- **Turnstile Secret Key**: Your Cloudflare Turnstile secret key (stored securely)
+- **Enable Turnstile** — show the verification widget before the PDF loads
+- **Site Key** — your Turnstile site key ([Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/turnstile))
+- **Secret Key** — stored for future server-side verification (not used by the current client-side flow)
 
 ### Debug Settings
 
-- **Enable Debug Mode**: Outputs detailed logs to the browser console — disable in production
+- **Enable Debug Mode** — detailed logs in the browser console; disable in production
 
-## Security Features
+## Security Notes
 
-- PDF URLs encrypted with XOR cipher + Base64 — no plaintext URLs in HTML source
-- Server-side `the_content` filter removes PDF src attributes before page is sent to browser
-- Early inline JS intercepts dynamically created iframes via MutationObserver
-- All PDF Embedder CSS/JS stripped from page until user clicks — reduces attack surface for bots
-- Optional Cloudflare Turnstile verification gate before any PDF asset loads
+- The URL "encryption" is **obfuscation** (XOR + Base64 with a key that is public in the page source). It defeats naive HTML parsers, not a determined scraper
+- Turnstile is verified on the client only — it filters casual bots, but is not a server-side access control
+- What really protects against bots here: no PDF URL in plain text, no viewer iframe and no viewer/PDF requests until a real interaction happens
 
 ## Technical Details
 
-### 3-Layer Asset Capture (v1.1.0+)
+### Asset capture
 
-PDF Embedder (especially premium versions) registers assets at multiple points in the WordPress lifecycle:
+Only **queued** PDF Embedder handles are collected (registered-but-unused files such as the free plugin's `pdf.js` when Premium renders the shortcode are never loaded). For every handle:
 
-- **Layer 1 — `wp_enqueue_scripts:999`**: Dequeues handles from a known list (`pdfemb-fullscreen`, `pdfemb-frontend`, `pdfemb-pdf-viewer`, etc.) plus any handle in the queue whose `src` path contains a PDF Embedder directory segment.
+| Field | Source |
+|---|---|
+| `src` / `href` | built like `WP_Scripts`/`WP_Styles`: `base_url` for relative paths, `?ver=` (`default_version` when `ver === false`), `script_loader_src` / `style_loader_src` filters |
+| `before` | `get_data( $handle, 'data' )` (`wp_localize_script`) + `before` inline scripts — printed immediately in the page (tiny, must exist before the deferred file) |
+| `after` | `after` inline scripts — executed right after the deferred file loads |
+| `media` / `inline` (CSS) | style `args` and `wp_add_inline_style()` content |
 
-- **Layer 2 — `wp_footer:1`**: After `the_content` and all shortcodes have executed, scans **all** entries in `$wp_styles->registered` and `$wp_scripts->registered` using `pdf_lazy_loader_is_pdfemb_src()`. This is the definitive catch for `pdfemb-fullscreen.min.css` and similar assets that `Viewer::render()` registers only at shortcode execution time — after Layer 1 has already run.
+PDF Embedder dependencies are collected recursively in dependency order; non-PDF-Embedder deps (e.g. `jquery`) stay enqueued.
 
-- **Layer 3 — `wp_footer:2`**: Outputs the final merged URL list as `window.pdfLazyLoaderLateAssets = {...}` before `</body>`. JavaScript reads this global at click time and merges it with the early list from `wp_add_inline_script`.
+Path detector used everywhere:
 
-**Path-based detector** used by all layers:
 ```php
-function pdf_lazy_loader_is_pdfemb_src( $src ) {
-    $markers = [
-        '/PDFEmbedder-premium-secure/',
-        '/PDFEmbedder-premium/',
-        '/pdf-embedder-premium/',
-        '/pdf-embedder/',
-        '/pdfemb/',
-    ];
-    foreach ( $markers as $m ) {
-        if ( stripos( $src, $m ) !== false ) return true;
-    }
-    return false;
-}
+'/PDFEmbedder-premium-secure/', '/PDFEmbedder-premium/',
+'/pdf-embedder-premium/', '/pdf-embedder/', '/pdfemb/'
 ```
 
-### ob_start Buffer
+### JavaScript
 
-Attached to `template_redirect:1` — only activated on pages that contain PDF content. Strips any surviving PDF Embedder `<link>`/`<script>` tags from the final HTML using a path-based regex. If new URLs are found that weren't captured by Layers 1–2, the buffer updates `window.pdfLazyLoaderLateAssets` before `</body>`.
+- One delegated `click` listener for all facades (server-rendered and JS-fallback)
+- `loadPDFEmbedderAssets()` merges `pdfLazyLoaderData.pdfembAssets` + `window.pdfLazyLoaderLateAssets`; CSS in parallel, JS strictly sequential; dedup by file name; runs once
+- `MutationObserver` is debounced (50 ms) and scans only added nodes
+- Iframes that did not pass through `the_content` (page builders, dynamic markup) are handled by the early `<head>` interceptor + JS fallback facade
+- Free PDF Embedder (`<a class="pdfemb-viewer">`, no iframe): no facade is possible, so its deferred assets are loaded immediately — the viewer is never left broken
 
-### JS Asset Injection (`loadPDFEmbedderAssets()`)
+### Filters
 
-Called once when the user clicks "View PDF":
+| Filter | Purpose |
+|---|---|
+| `pdf_lazy_loader_has_pdf` | Override page-level PDF detection (`bool`) |
 
-- Merges `pdfLazyLoaderData.pdfembAssets` (early) with `window.pdfLazyLoaderLateAssets` (late)
-- CSS is injected immediately (non-blocking); duplicates detected via `link.href.includes(filename)` — **no `CSS.escape()`** which was breaking dedup for filenames containing dots
-- JS scripts are loaded **sequentially** (`async=false`) to preserve PDF.js worker → viewer load order
-- Assets are injected only once — subsequent clicks skip injection
+### Content filters
 
-### Data Passing to JavaScript (v1.1.1+)
-
-`wp_localize_script()` has been replaced with `wp_add_inline_script(..., 'before')` on both the frontend and admin scripts. This is the approach recommended by WordPress core since WP 5.7 and avoids a potential formal deprecation in WP 7.x. The generated output is identical — a `var pdfLazyLoaderData = {...};` block injected before the script tag.
-
-### Server-Side Filtering
-
-The plugin hooks into WordPress content filters to strip PDF `src` attributes:
-
-- `the_content` — main post/page content
-- `widget_text` — classic text widgets
-- `widget_block_content` — block-based widgets
-- `rest_prepare_post` — REST API responses
-
-### Client-Side Interception
-
-An inline script injected at `wp_head:1` intercepts PDF iframes before they start loading:
-
-- Runs immediately on `<head>` — before any theme or plugin JS
-- MutationObserver watches for dynamically added iframes
-- Encrypts `src` into `data-pdf-lazy-original-src-enc` and removes `src`
-
-### Encryption
-
-- **Algorithm**: XOR cipher with Base64 encoding
-- **Key**: `pdf-lazy-loader-secure-key-2024`
-- **Parity**: Identical implementation in PHP (`pdf_lazy_loader_encrypt_url()`) and JavaScript (`encryptURL()` / `decryptURL()`)
+- `the_content`, `widget_text`, `widget_block_content` — facade + obfuscated iframe
+- `rest_prepare_{post_type}` for every public post type with REST — obfuscated iframe, no facade markup
 
 ## File Structure
 
@@ -160,12 +136,28 @@ pdf-lazy-loader/
 
 ## Requirements
 
-- WordPress 5.0 or higher
-- PHP 7.2 or higher
-- JavaScript enabled in browser
-- PDF Embedder (free or premium) installed and active
+- WordPress 5.7+ (tested up to 7.1)
+- PHP 7.4+
+- PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.2.0
+- **Compatibility**: `Tested up to: 7.1`, `Requires PHP: 7.4`, `Requires at least: 5.7`; inline scripts via `wp_get_inline_script_tag()`
+- **Fix**: localized data and inline scripts of deferred PDF Embedder handles (`pdfemb_trans` etc.) are preserved
+- **Fix**: deferred asset URLs now include `?ver=` and use `base_url` for relative paths
+- **Fix**: plugin no longer touches the PDF Embedder viewer request (`/?pdfemb-data=`) — previously viewer scripts could be stripped inside the iframe when the front page contained a PDF
+- **Fix**: PDF detection scans all posts of the main query (archives / blog index), tri-state memoized
+- **Fix**: REST filtering for every public post type, not only `post`
+- **Perf**: server-side facade in `the_content` (no CLS, works before JS)
+- **Perf**: spinner delay runs in parallel with asset loading, default 1500 → 300 ms (one-time migration)
+- **Perf**: preload of viewer assets and Turnstile script on hover / focus / touch
+- **Perf**: frontend JS loaded with `defer`; facade styles moved from inline JS to CSS with custom properties and `@media` (no resize listeners)
+- **Perf**: debounced `MutationObserver` that only scans added nodes; single-pass `ob_start` callback with fast exit; Layer 3 no longer duplicated by the buffer
+- **Perf**: only queued PDF Embedder handles are deferred — unused registered files are never downloaded
+- **i18n**: all facade/admin strings translatable (`pdf-lazy-loader`)
+- **Cleanup**: `substr()` → `slice()`, `wp_unslash()` for `$_POST`, enqueue hook moved to its own priority (1000), Turnstile widget re-render on retry
+- **Safety**: free PDF Embedder without Premium — deferred assets load immediately instead of leaving the viewer broken
 
 ### v1.1.1
 - **Refactor**: Replaced `wp_localize_script()` with `wp_add_inline_script(..., 'before')` on both frontend (`pdfLazyLoaderData`) and admin (`pdfLazyLoaderAdmin`) scripts — forward-compatible with WP 7.x
