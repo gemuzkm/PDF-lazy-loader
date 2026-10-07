@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.2.1
+ * Version: 1.3.0
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.2.1' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.0' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -51,6 +51,12 @@ add_action( 'template_redirect', 'pdf_lazy_loader_start_output_buffer', 1 );
 add_filter( 'pre_update_option_pdf_lazy_loader_enable_download',  'pdf_lazy_loader_update_checkbox', 10, 2 );
 add_filter( 'pre_update_option_pdf_lazy_loader_enable_turnstile', 'pdf_lazy_loader_update_checkbox', 10, 2 );
 add_filter( 'pre_update_option_pdf_lazy_loader_debug_mode',       'pdf_lazy_loader_update_checkbox', 10, 2 );
+add_filter( 'pre_update_option_pdf_lazy_loader_server_verify',    'pdf_lazy_loader_update_checkbox', 10, 2 );
+// Empty secret key field = keep the stored key (the key is never printed back into the form)
+add_filter( 'pre_update_option_pdf_lazy_loader_turnstile_secret_key', 'pdf_lazy_loader_keep_secret_key', 10, 2 );
+
+// Server-side Turnstile verification endpoint
+add_action( 'rest_api_init', 'pdf_lazy_loader_register_verify_route' );
 
 // Content
 add_filter( 'the_content',          'pdf_lazy_loader_filter_content', 999 );
@@ -342,11 +348,16 @@ function pdf_lazy_loader_register_settings() {
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_enable_turnstile',        array( 'type' => 'boolean', 'sanitize_callback' => 'pdf_lazy_loader_sanitize_checkbox', 'default' => false ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_turnstile_site_key',      array( 'type' => 'string',  'sanitize_callback' => 'sanitize_text_field', 'default' => '' ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_turnstile_secret_key',    array( 'type' => 'string',  'sanitize_callback' => 'sanitize_text_field', 'default' => '' ) );
+    register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_server_verify',           array( 'type' => 'boolean', 'sanitize_callback' => 'pdf_lazy_loader_sanitize_checkbox', 'default' => false ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_debug_mode',              array( 'type' => 'boolean', 'sanitize_callback' => 'pdf_lazy_loader_sanitize_checkbox', 'default' => false ) );
 }
 
 function pdf_lazy_loader_sanitize_loading_time( $value ) {
     return max( 0, min( 5000, absint( $value ) ) );
+}
+
+function pdf_lazy_loader_keep_secret_key( $value, $old_value ) {
+    return ( $value === '' || $value === null ) ? $old_value : $value;
 }
 
 function pdf_lazy_loader_sanitize_checkbox( $value ) {
@@ -386,7 +397,9 @@ function pdf_lazy_loader_get_settings() {
         'enableTurnstile'     => $to_bool( get_option( 'pdf_lazy_loader_enable_turnstile', false ) ),
         'turnstileSiteKey'    => sanitize_text_field( get_option( 'pdf_lazy_loader_turnstile_site_key', '' ) ),
         'debugMode'           => $to_bool( get_option( 'pdf_lazy_loader_debug_mode', false ) ),
+        'serverVerify'        => false,
     );
+    $settings['serverVerify'] = pdf_lazy_loader_server_verify_active( $settings );
     return $settings;
 }
 
@@ -404,6 +417,9 @@ function pdf_lazy_loader_get_i18n() {
         'verifyExpired'=> __( 'Verification expired.', 'pdf-lazy-loader' ),
         'verifyError'  => __( 'Verification error. Refresh the page.', 'pdf-lazy-loader' ),
         'verifyLoad'   => __( 'Failed to load verification.', 'pdf-lazy-loader' ),
+        'verifyServer' => __( 'Verification could not be completed. Please try again.', 'pdf-lazy-loader' ),
+        'verifyReload' => __( 'This page is outdated. Please reload it.', 'pdf-lazy-loader' ),
+        'retry'        => __( 'Try again', 'pdf-lazy-loader' ),
     );
 }
 
@@ -436,6 +452,199 @@ function pdf_lazy_loader_encrypt_url( $url ) {
         $out .= chr( ord( $url[ $i ] ) ^ ord( $key[ $i % $key_len ] ) );
     }
     return base64_encode( $out ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
+}
+
+// ---------------------------------------------------------------------------
+// Server-side Turnstile verification (optional, off by default).
+//
+// Page render: the iframe src (and download URL) is sealed with AES-256-GCM
+//   using a key derived from wp_salt('auth'). Stateless — nothing is stored in
+//   the DB, works with full-page cache. Cost: one openssl_encrypt per PDF.
+// Click: browser solves Turnstile, POSTs {token, refs[]} to
+//   /wp-json/pdf-lazy-loader/v1/verify. The endpoint
+//   1) validates input and decrypts refs locally (garbage is rejected before
+//      any outbound call),
+//   2) calls Cloudflare siteverify once (timeout 5 s),
+//   3) returns the URLs for ALL refs on the page (one token per page view).
+// No DB writes. Optional per-IP rate limit only with a persistent object cache.
+// ---------------------------------------------------------------------------
+function pdf_lazy_loader_server_verify_active( $settings = null ) {
+    if ( ! get_option( 'pdf_lazy_loader_server_verify', false ) ) return false;
+    if ( ! function_exists( 'openssl_encrypt' ) || ! in_array( 'aes-256-gcm', openssl_get_cipher_methods(), true ) ) return false;
+    if ( $settings === null ) {
+        $enabled  = (bool) get_option( 'pdf_lazy_loader_enable_turnstile', false );
+        $site_key = (string) get_option( 'pdf_lazy_loader_turnstile_site_key', '' );
+    } else {
+        $enabled  = ! empty( $settings['enableTurnstile'] );
+        $site_key = (string) $settings['turnstileSiteKey'];
+    }
+    return $enabled && $site_key !== '' && (string) get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ) !== '';
+}
+
+function pdf_lazy_loader_ref_key() {
+    static $key = null;
+    if ( $key === null ) $key = hash_hmac( 'sha256', 'pdf-lazy-loader-ref-v1', wp_salt( 'auth' ), true );
+    return $key;
+}
+
+function pdf_lazy_loader_b64url_encode( $bin ) {
+    return rtrim( strtr( base64_encode( $bin ), '+/', '-_' ), '=' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
+}
+
+function pdf_lazy_loader_b64url_decode( $str ) {
+    $str = strtr( (string) $str, '-_', '+/' );
+    $pad = strlen( $str ) % 4;
+    if ( $pad ) $str .= str_repeat( '=', 4 - $pad );
+    return base64_decode( $str, true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+}
+
+/** Seal iframe src + download URL. Returns '' on failure (caller falls back to XOR mode). */
+function pdf_lazy_loader_seal_ref( $src, $pdf_url = '' ) {
+    $plain = wp_json_encode( array( 's' => (string) $src, 'p' => (string) $pdf_url ) );
+    $iv    = random_bytes( 12 );
+    $tag   = '';
+    $ct    = openssl_encrypt( $plain, 'aes-256-gcm', pdf_lazy_loader_ref_key(), OPENSSL_RAW_DATA, $iv, $tag, 'pll1' );
+    if ( $ct === false ) return '';
+    return pdf_lazy_loader_b64url_encode( $iv . $tag . $ct );
+}
+
+/** Open a sealed ref. Returns array{s,p} or null when tampered / foreign / salts rotated. */
+function pdf_lazy_loader_open_ref( $ref ) {
+    if ( ! is_string( $ref ) || strlen( $ref ) > 4096 || ! preg_match( '/^[A-Za-z0-9_-]{40,}$/', $ref ) ) return null;
+    $bin = pdf_lazy_loader_b64url_decode( $ref );
+    if ( $bin === false || strlen( $bin ) < 29 ) return null;
+    $plain = openssl_decrypt( substr( $bin, 28 ), 'aes-256-gcm', pdf_lazy_loader_ref_key(), OPENSSL_RAW_DATA, substr( $bin, 0, 12 ), substr( $bin, 12, 16 ), 'pll1' );
+    if ( $plain === false ) return null;
+    $data = json_decode( $plain, true );
+    if ( ! is_array( $data ) || empty( $data['s'] ) || ! pdf_lazy_loader_is_pdf_url( $data['s'] ) ) return null;
+    return array( 's' => (string) $data['s'], 'p' => isset( $data['p'] ) ? (string) $data['p'] : '' );
+}
+
+function pdf_lazy_loader_register_verify_route() {
+    register_rest_route( 'pdf-lazy-loader/v1', '/verify', array(
+        'methods'             => 'POST',
+        'callback'            => 'pdf_lazy_loader_rest_verify',
+        'permission_callback' => '__return_true', // public: the Turnstile token IS the authorization
+        'args'                => array(
+            'token' => array( 'type' => 'string', 'required' => true ),
+            'refs'  => array( 'type' => 'array',  'required' => true, 'items' => array( 'type' => 'string' ) ),
+        ),
+    ) );
+}
+
+function pdf_lazy_loader_client_ip() {
+    // REMOTE_ADDR only — headers like CF-Connecting-IP are spoofable unless the
+    // origin is locked to Cloudflare. Use the filter to trust them explicitly.
+    $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+    return (string) apply_filters( 'pdf_lazy_loader_client_ip', $ip );
+}
+
+function pdf_lazy_loader_rest_error( $code, $message, $status, $timing = array() ) {
+    $r = new WP_REST_Response( array( 'success' => false, 'code' => $code, 'message' => $message ), $status );
+    $r->header( 'Cache-Control', 'no-store, private' );
+    if ( $timing ) $r->header( 'Server-Timing', pdf_lazy_loader_server_timing( $timing ) );
+    return $r;
+}
+
+function pdf_lazy_loader_server_timing( $t ) {
+    $parts = array();
+    foreach ( $t as $k => $ms ) $parts[] = $k . ';dur=' . round( $ms, 1 );
+    return implode( ', ', $parts );
+}
+
+function pdf_lazy_loader_rest_verify( WP_REST_Request $request ) {
+    $t0     = microtime( true );
+    $timing = array();
+    $t      = pdf_lazy_loader_get_i18n();
+
+    if ( ! pdf_lazy_loader_server_verify_active() ) {
+        return pdf_lazy_loader_rest_error( 'disabled', 'Server verification is disabled.', 404 );
+    }
+
+    // Optional rate limit — only with a persistent object cache (no DB writes)
+    $limit = (int) apply_filters( 'pdf_lazy_loader_verify_rate_limit', 20 ); // requests / minute / IP
+    if ( $limit > 0 && wp_using_ext_object_cache() ) {
+        $bucket = 'rl_' . md5( pdf_lazy_loader_client_ip() ) . '_' . floor( time() / 60 );
+        $n      = wp_cache_incr( $bucket, 1, 'pdf_lazy_loader' );
+        if ( $n === false ) { wp_cache_add( $bucket, 1, 'pdf_lazy_loader', 120 ); $n = 1; }
+        if ( $n > $limit ) return pdf_lazy_loader_rest_error( 'rate_limited', $t['verifyServer'], 429 );
+    }
+
+    // 1) Cheap local validation BEFORE the outbound call
+    $token = (string) $request->get_param( 'token' );
+    $refs  = (array) $request->get_param( 'refs' );
+    if ( $token === '' || strlen( $token ) > 2048 || ! preg_match( '/^[A-Za-z0-9._:-]+$/', $token ) ) {
+        return pdf_lazy_loader_rest_error( 'bad_token', $t['verifyFailed'], 400 );
+    }
+    $refs = array_slice( array_values( array_unique( array_filter( $refs, 'is_string' ) ) ), 0, 50 );
+    $open = array();
+    foreach ( $refs as $ref ) {
+        $d = pdf_lazy_loader_open_ref( $ref );
+        if ( $d ) $open[ $ref ] = $d;
+    }
+    $timing['decrypt'] = ( microtime( true ) - $t0 ) * 1000;
+    if ( ! $open ) {
+        // Page cached with old salts, or forged refs — no siteverify call is made
+        return pdf_lazy_loader_rest_error( 'stale_refs', $t['verifyReload'], 409, $timing );
+    }
+
+    // 2) Cloudflare siteverify
+    $body = array(
+        'secret'   => (string) get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ),
+        'response' => $token,
+    );
+    if ( apply_filters( 'pdf_lazy_loader_verify_send_ip', false ) ) {
+        $body['remoteip'] = pdf_lazy_loader_client_ip();
+    }
+    $t1  = microtime( true );
+    $res = wp_remote_post( 'https://challenges.cloudflare.com/turnstile/v0/siteverify', array(
+        'timeout'     => (int) apply_filters( 'pdf_lazy_loader_verify_timeout', 5 ),
+        'redirection' => 0,
+        'body'        => $body,
+    ) );
+    $timing['siteverify'] = ( microtime( true ) - $t1 ) * 1000;
+
+    if ( is_wp_error( $res ) || (int) wp_remote_retrieve_response_code( $res ) !== 200 ) {
+        $timing['total'] = ( microtime( true ) - $t0 ) * 1000;
+        if ( get_option( 'pdf_lazy_loader_debug_mode', false ) ) {
+            error_log( '[PDF Lazy Loader] siteverify unreachable: ' . ( is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+        }
+        return pdf_lazy_loader_rest_error( 'siteverify_unreachable', $t['verifyServer'], 503, $timing );
+    }
+
+    $out = json_decode( wp_remote_retrieve_body( $res ), true );
+    $ok  = is_array( $out ) && ! empty( $out['success'] );
+
+    // Action must match what the widget was rendered with
+    if ( $ok && ! empty( $out['action'] ) && $out['action'] !== 'pdf_view' ) $ok = false;
+
+    // Hostname must be this site (skipped for Cloudflare's dummy test secrets)
+    $secret  = $body['secret'];
+    $is_test = (bool) preg_match( '/^[123]x0{30,}AA$/', $secret );
+    if ( $ok && ! $is_test && apply_filters( 'pdf_lazy_loader_verify_hostname', true ) && ! empty( $out['hostname'] ) ) {
+        $hosts = array_unique( array_filter( array( wp_parse_url( home_url(), PHP_URL_HOST ), wp_parse_url( site_url(), PHP_URL_HOST ) ) ) );
+        if ( ! in_array( strtolower( $out['hostname'] ), array_map( 'strtolower', $hosts ), true ) ) $ok = false;
+    }
+
+    if ( ! $ok ) {
+        $timing['total'] = ( microtime( true ) - $t0 ) * 1000;
+        if ( get_option( 'pdf_lazy_loader_debug_mode', false ) ) {
+            error_log( '[PDF Lazy Loader] siteverify rejected: ' . wp_json_encode( isset( $out['error-codes'] ) ? $out['error-codes'] : $out ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+        }
+        return pdf_lazy_loader_rest_error( 'verify_failed', $t['verifyFailed'], 403, $timing );
+    }
+
+    // 3) Release the URLs
+    $urls = array();
+    foreach ( $open as $ref => $d ) {
+        $urls[ $ref ] = array( 'src' => $d['s'], 'pdf' => get_option( 'pdf_lazy_loader_enable_download', false ) ? $d['p'] : '' );
+    }
+    $timing['total'] = ( microtime( true ) - $t0 ) * 1000;
+
+    $r = new WP_REST_Response( array( 'success' => true, 'urls' => $urls ), 200 );
+    $r->header( 'Cache-Control', 'no-store, private' );
+    $r->header( 'Server-Timing', pdf_lazy_loader_server_timing( $timing ) );
+    return $r;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,7 +689,7 @@ function pdf_lazy_loader_facade_html( $id, $pdf_url, $max_width = '' ) {
     $s    = pdf_lazy_loader_get_settings();
     $t    = pdf_lazy_loader_get_i18n();
     $attr = ' data-pll-target="' . esc_attr( $id ) . '"';
-    if ( $s['enableDownload'] && $pdf_url ) {
+    if ( $s['enableDownload'] && $pdf_url && ! $s['serverVerify'] ) {
         $attr .= ' data-pdf-url-enc="' . esc_attr( pdf_lazy_loader_encrypt_url( $pdf_url ) ) . '"';
     }
     $style = $max_width ? ' style="max-width:' . esc_attr( $max_width ) . '"' : '';
@@ -512,15 +721,24 @@ function pdf_lazy_loader_filter_content( $content, $with_facade = true ) {
 
     $out = preg_replace_callback( '/<iframe\b([^>]*?)>/is', function( $matches ) use ( $with_facade ) {
         $attrs = $matches[1];
-        if ( strpos( $attrs, 'data-pdf-lazy-original-src-enc' ) !== false ) return $matches[0];
+        if ( strpos( $attrs, 'data-pdf-lazy-original-src-enc' ) !== false || strpos( $attrs, 'data-pll-ref' ) !== false ) return $matches[0];
         if ( ! preg_match( '/\ssrc\s*=\s*(["\'])(.*?)\1/is', $attrs, $m ) ) return $matches[0];
         if ( ! pdf_lazy_loader_is_pdf_url( $m[2] ) ) return $matches[0];
 
         $GLOBALS['pdf_lazy_loader_has_pdfs'] = true;
         $src = html_entity_decode( $m[2], ENT_QUOTES );
 
-        $new_attrs  = ' ' . trim( preg_replace( '/\ssrc\s*=\s*(["\']).*?\1/is', '', $attrs ) );
-        $new_attrs .= ' data-pdf-lazy-original-src-enc="' . esc_attr( pdf_lazy_loader_encrypt_url( $src ) ) . '"';
+        $new_attrs = ' ' . trim( preg_replace( '/\ssrc\s*=\s*(["\']).*?\1/is', '', $attrs ) );
+        $ref       = pdf_lazy_loader_get_settings()['serverVerify']
+            ? pdf_lazy_loader_seal_ref( $src, pdf_lazy_loader_resolve_pdf_url( $src ) )
+            : '';
+        if ( $ref !== '' ) {
+            // Server mode: only an AES-256-GCM sealed reference is in the HTML.
+            // The URL is released by /pdf-lazy-loader/v1/verify after siteverify.
+            $new_attrs .= ' data-pll-ref="' . esc_attr( $ref ) . '"';
+        } else {
+            $new_attrs .= ' data-pdf-lazy-original-src-enc="' . esc_attr( pdf_lazy_loader_encrypt_url( $src ) ) . '"';
+        }
 
         if ( ! $with_facade ) {
             return '<iframe' . rtrim( $new_attrs ) . ' data-pdf-lazy-intercepted="1">';
@@ -577,7 +795,7 @@ function pdf_lazy_loader_filter_rest_content( $response, $post, $request ) {
 function pdf_lazy_loader_content_has_pdf( $c ) {
     if ( $c === '' ) return false;
     if ( strpos( $c, '[pdf-embedder' ) !== false || strpos( $c, '[pdfemb' ) !== false || strpos( $c, 'pdf-embedder' ) !== false ) return true;
-    if ( strpos( $c, 'data-pdf-lazy-original-src-enc' ) !== false ) return true;
+    if ( strpos( $c, 'data-pdf-lazy-original-src-enc' ) !== false || strpos( $c, 'data-pll-ref' ) !== false ) return true;
     if ( stripos( $c, '<iframe' ) !== false &&
          preg_match_all( '/<iframe[^>]*(?:src|data-src)\s*=\s*["\']([^"\']*?)["\']/is', $c, $m ) ) {
         foreach ( $m[1] as $src ) {
@@ -726,6 +944,7 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
         'version'      => PDF_LAZY_LOADER_VERSION,
         'pdfembAssets' => $assets,
         'i18n'         => pdf_lazy_loader_get_i18n(),
+        'verifyUrl'    => $settings['serverVerify'] ? esc_url_raw( rest_url( 'pdf-lazy-loader/v1/verify' ) ) : '',
     ) );
 
     // Facade CSS (~3 KB minified) is INLINED — no extra render-blocking request.
@@ -863,8 +1082,34 @@ function pdf_lazy_loader_settings_page() {
                     <tr>
                         <th scope="row"><label for="pdf_lazy_loader_turnstile_secret_key">Secret Key</label></th>
                         <td>
-                            <input type="password" id="pdf_lazy_loader_turnstile_secret_key" name="pdf_lazy_loader_turnstile_secret_key" value="<?php echo esc_attr( get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ) ); ?>" class="regular-text" placeholder="1x0000000000000000000000000000000AA" />
-                            <span class="description">Your Cloudflare Turnstile Secret Key (stored securely)</span>
+                            <?php $pll_has_secret = (string) get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ) !== ''; ?>
+                            <input type="password" id="pdf_lazy_loader_turnstile_secret_key" name="pdf_lazy_loader_turnstile_secret_key" value="" autocomplete="new-password" class="regular-text" placeholder="<?php echo $pll_has_secret ? esc_attr__( '•••••••• saved — leave empty to keep', 'pdf-lazy-loader' ) : '1x0000000000000000000000000000000AA'; ?>" />
+                            <span class="description">Cloudflare Turnstile Secret Key. Used only by server-side verification below; never sent to the browser or printed back into this form.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="pdf_lazy_loader_server_verify">Server-side verification</label></th>
+                        <td>
+                            <input type="hidden" name="pdf_lazy_loader_server_verify" value="0" />
+                            <label class="pll-toggle">
+                                <input type="checkbox" id="pdf_lazy_loader_server_verify" name="pdf_lazy_loader_server_verify" value="1" <?php checked( (bool) get_option( 'pdf_lazy_loader_server_verify', false ), true ); ?> />
+                                <span class="pll-toggle__slider"></span>
+                            </label>
+                            <span class="description">
+                                Validate the Turnstile token on the server (Cloudflare <code>siteverify</code>) before the PDF URL is released.
+                                The page HTML then contains only an AES-256-GCM encrypted reference instead of the XOR-obfuscated URL,
+                                so the PDF cannot be extracted from the source or opened by calling JS from the console.<br>
+                                Cost: one REST request <code>POST /wp-json/pdf-lazy-loader/v1/verify</code> per page view on the first click
+                                (+ one outbound HTTPS call to Cloudflare, typically 30–200&nbsp;ms), no database writes.
+                                If you filter REST in Cloudflare WAF, allow this route.
+                            </span>
+                            <?php
+                            if ( get_option( 'pdf_lazy_loader_server_verify', false ) && ! pdf_lazy_loader_server_verify_active() ) {
+                                echo '<p class="description" style="color:#b3261e"><strong>' . esc_html__( 'Not active: requires Turnstile enabled, Site Key, Secret Key and PHP OpenSSL (aes-256-gcm). Falling back to client-side check.', 'pdf-lazy-loader' ) . '</strong></p>';
+                            } elseif ( pdf_lazy_loader_server_verify_active() ) {
+                                echo '<p class="description" style="color:#1a7f37"><strong>' . esc_html__( 'Active.', 'pdf-lazy-loader' ) . '</strong> <code>' . esc_html( rest_url( 'pdf-lazy-loader/v1/verify' ) ) . '</code></p>';
+                            }
+                            ?>
                         </td>
                     </tr>
                 </table>
@@ -925,7 +1170,7 @@ function pdf_lazy_loader_uninstall() {
         'pdf_lazy_loader_loading_time', 'pdf_lazy_loader_enable_download',
         'pdf_lazy_loader_facade_height_desktop', 'pdf_lazy_loader_facade_height_tablet',
         'pdf_lazy_loader_facade_height_mobile', 'pdf_lazy_loader_enable_turnstile',
-        'pdf_lazy_loader_turnstile_site_key', 'pdf_lazy_loader_turnstile_secret_key',
+        'pdf_lazy_loader_turnstile_site_key', 'pdf_lazy_loader_turnstile_secret_key', 'pdf_lazy_loader_server_verify',
         'pdf_lazy_loader_debug_mode', 'pdf_lazy_loader_db_version',
     );
     foreach ( $options as $o ) delete_option( $o );

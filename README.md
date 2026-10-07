@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.2.1
+# PDF Lazy Loader v1.3.0
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -8,7 +8,8 @@ WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behi
 - **Zero PDF assets on page load**: PDF Embedder CSS/JS (including `pdfemb-fullscreen.min.css` enqueued inside `Viewer::render()`) are captured and loaded only on click
 - **Localized data preserved**: `wp_localize_script()` / `wp_add_inline_script()` data attached to PDF Embedder handles (e.g. `pdfemb_trans`) is carried over, so deferred scripts work exactly as when loaded normally
 - **Fast click-to-view**: minimum spinner time runs *in parallel* with asset loading (default 300 ms); static viewer assets are preloaded on hover / focus / touch
-- **Cloudflare Turnstile**: optional client-side verification before the PDF loads (widget script is also preloaded on intent)
+- **Cloudflare Turnstile**: optional verification before the PDF loads (widget script is also preloaded on intent)
+- **Server-side Turnstile verification** (optional): token checked via Cloudflare `siteverify`; the page contains only an AES-256-GCM encrypted reference, the PDF URL is released by a REST endpoint after verification
 - **URL obfuscation**: iframe `src` is replaced by an XOR + Base64 copy in `data-pdf-lazy-original-src-enc`
 - **Responsive facade**: heights per breakpoint via CSS custom properties and `@media` (no resize listeners)
 - **Accessible by default (WCAG AA)**: button/icon colors are auto-darkened (same hue) until white text reaches 4.5:1; all facade texts meet 4.5:1; no heading tags in the facade (does not break the page heading outline)
@@ -68,7 +69,44 @@ On upgrade from ≤ 1.1.1 the old default `1500` is migrated to `300` once; any 
 
 - **Enable Turnstile** — show the verification widget before the PDF loads
 - **Site Key** — your Turnstile site key ([Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/turnstile))
-- **Secret Key** — stored for future server-side verification (not used by the current client-side flow)
+- **Secret Key** — used only by server-side verification; never sent to the browser and never printed back into the settings form (leave the field empty to keep the stored key)
+- **Server-side verification** — see below
+
+### Server-side verification (optional, off by default)
+
+Requires: Turnstile enabled + Site Key + Secret Key + PHP OpenSSL (`aes-256-gcm`). If any is missing the plugin silently stays in client-side mode and the settings page shows *Not active*.
+
+| | Client-side mode (default) | Server-side mode |
+|---|---|---|
+| What is in the HTML | XOR + Base64 copy of the iframe `src` / download URL (key is public) | AES-256-GCM sealed reference `data-pll-ref` (key derived from `wp_salt('auth')`, never leaves the server) |
+| Bot reads the HTML | Can decode the URL | Gets nothing usable |
+| Bot calls JS from the console | Gets the PDF | Needs a valid Turnstile token |
+| Turnstile token | Checked in the browser only | Checked by Cloudflare `siteverify` (single-use, action `pdf_view`, hostname = this site) |
+| Extra server work | none | 1 REST request per page view, on the first click |
+
+Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `{token, refs[]}` → refs are decrypted locally (forged / stale refs are rejected **before** any outbound call) → one `siteverify` call → URLs for **all** PDFs on the page are returned (one token per page view; other PDFs open without a second challenge). Viewer CSS/JS download in parallel with the challenge.
+
+**Latency** (measured on a local test site, Cloudflare `siteverify` from the server ≈ 60–70 ms):
+
+| Step | Typical | Notes |
+|---|---|---|
+| Turnstile challenge | 0.3–3 s | Same as client-side mode; managed mode is often invisible. Not added by this option |
+| `verify` request round-trip | +80–150 ms | WordPress REST bootstrap (~15–25 ms PHP) + `siteverify` (30–200 ms depending on hosting location) + browser↔server RTT |
+| Worst case | 5 s | `siteverify` timeout (filter `pdf_lazy_loader_verify_timeout`), then an error with retry; the PDF is **not** released (fail-closed) |
+
+**Server load**:
+
+| | Cost |
+|---|---|
+| Page render | one `openssl_encrypt` per PDF iframe (~3 µs). No DB queries. Compatible with full-page cache |
+| `verify` request | one uncached WordPress REST bootstrap (~6 MB RAM, ~20 ms CPU, only the standard autoload option reads) + one outbound HTTPS request. **No DB writes**, no sessions, no transients |
+| Forged / garbage requests | rejected locally in < 1 ms of plugin code, no `siteverify` call |
+| Rate limit | 20 req/min/IP (filter `pdf_lazy_loader_verify_rate_limit`) — only when a persistent object cache (Redis/Memcached) is present; without it no limit is applied, to avoid DB writes |
+
+Notes:
+- If Cloudflare WAF filters REST on your site, allow `POST /wp-json/pdf-lazy-loader/v1/verify`. The endpoint answers with `Cache-Control: no-store` and a `Server-Timing` header (`decrypt`, `siteverify`, `total`) visible in DevTools.
+- Rotating WordPress salts invalidates refs in already cached pages — visitors see "This page is outdated. Please reload it." until the cache is purged.
+- The PDF file itself stays a public static file: anyone who already knows its URL can download it. Server-side mode prevents extracting the URL from the page, it is not an access control on `wp-content/uploads`.
 
 ### Debug Settings
 
@@ -77,7 +115,7 @@ On upgrade from ≤ 1.1.1 the old default `1500` is migrated to `300` once; any 
 ## Security Notes
 
 - The URL "encryption" is **obfuscation** (XOR + Base64 with a key that is public in the page source). It defeats naive HTML parsers, not a determined scraper
-- Turnstile is verified on the client only — it filters casual bots, but is not a server-side access control
+- In client-side mode Turnstile is verified in the browser only — it filters casual bots, but is not a server-side access control. Enable **Server-side verification** for a real check (the URL is then not present in the HTML at all)
 - What really protects against bots here: no PDF URL in plain text, no viewer iframe and no viewer/PDF requests until a real interaction happens
 
 ## Technical Details
@@ -117,6 +155,11 @@ Path detector used everywhere:
 | `pdf_lazy_loader_has_pdf` | Override page-level PDF detection (`bool`) |
 | `pdf_lazy_loader_enforce_contrast` | `false` — use button colors exactly as entered (no WCAG adjustment) |
 | `pdf_lazy_loader_inline_css` | `false` — load `pdf-lazy-loader.css` as an external file instead of inlining |
+| `pdf_lazy_loader_verify_timeout` | `siteverify` timeout, seconds (default `5`) |
+| `pdf_lazy_loader_verify_rate_limit` | Requests per minute per IP for `/verify` (default `20`, `0` = off; needs persistent object cache) |
+| `pdf_lazy_loader_verify_hostname` | `false` — do not compare `siteverify` hostname with the site host |
+| `pdf_lazy_loader_verify_send_ip` | `true` — send `remoteip` to `siteverify` |
+| `pdf_lazy_loader_client_ip` | Client IP used for rate limit / `remoteip` (default `REMOTE_ADDR`; e.g. return `CF-Connecting-IP` if the origin accepts traffic only from Cloudflare) |
 
 ### Content filters
 
@@ -149,6 +192,14 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.3.0
+- **Server-side Turnstile verification** (optional, Settings → Cloudflare Turnstile → *Server-side verification*): REST endpoint `POST /wp-json/pdf-lazy-loader/v1/verify` validates the token with Cloudflare `siteverify` (single-use, action `pdf_view`, hostname check) and only then returns the PDF URLs
+- In server mode the HTML contains an AES-256-GCM sealed reference (`data-pll-ref`) instead of the XOR-obfuscated URL; download URL is released the same way; REST `wp/v2` output is sealed too
+- Stateless: no DB writes, full-page cache compatible; forged refs rejected before any outbound call; one token unlocks all PDFs on the page; optional rate limit with persistent object cache
+- `Server-Timing` header on the endpoint for latency diagnostics
+- Viewer assets download in parallel with the Turnstile challenge
+- Secret Key is no longer printed back into the settings form (empty field keeps the stored key)
 
 ### v1.2.1
 Fixes for Google PageSpeed / Lighthouse findings:

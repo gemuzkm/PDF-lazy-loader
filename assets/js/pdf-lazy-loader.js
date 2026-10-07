@@ -12,7 +12,10 @@
         verifyFailed: 'Verification failed.',
         verifyExpired: 'Verification expired.',
         verifyError: 'Verification error. Refresh the page.',
-        verifyLoad: 'Failed to load verification.'
+        verifyLoad: 'Failed to load verification.',
+        verifyServer: 'Verification could not be completed. Please try again.',
+        verifyReload: 'This page is outdated. Please reload it.',
+        retry: 'Try again'
     };
 
     const toBool = v => v === true || v === 1 || v === '1' || v === 'true';
@@ -21,11 +24,12 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.2.1',
+            version:          raw.version || '1.3.0',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
             turnstileSiteKey: raw.turnstileSiteKey || '',
+            verifyUrl:        raw.verifyUrl || '',
             debugMode:        toBool(raw.debugMode),
             pdfembAssets:     (raw.pdfembAssets && typeof raw.pdfembAssets === 'object') ? raw.pdfembAssets : { css: [], js: [] },
             i18n:             Object.assign({}, DEFAULT_I18N, raw.i18n || {})
@@ -316,7 +320,104 @@
             if (title) title.insertAdjacentElement('afterend', sp); else content.appendChild(sp);
         }
 
+        // ------------------------------------------------------------------
+        // Server-side verification mode (verifyUrl set): the iframe carries an
+        // encrypted data-pll-ref; URLs are released by the REST endpoint after
+        // Cloudflare siteverify. One token resolves ALL refs on the page.
+        // ------------------------------------------------------------------
+        getRef(wrapper) {
+            const iframe = this.getIframe(wrapper);
+            return iframe ? (iframe.getAttribute('data-pll-ref') || '') : '';
+        }
+
+        isServerMode(wrapper) { return !!(this.options.verifyUrl && this.getRef(wrapper)); }
+
+        serverResolve(token) {
+            if (!this._resolved) this._resolved = {};
+            const refs = Array.from(document.querySelectorAll('iframe[data-pll-ref]'))
+                .map(f => f.getAttribute('data-pll-ref'))
+                .filter((r, i, a) => r && !this._resolved[r] && a.indexOf(r) === i);
+            const t0 = performance.now();
+            return fetch(this.options.verifyUrl, {
+                method: 'POST',
+                credentials: 'omit',
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token, refs: refs })
+            }).then(r => r.json().catch(() => ({})).then(j => {
+                this.debug('verify', r.status, Math.round(performance.now() - t0) + ' ms', r.headers.get('Server-Timing') || '');
+                if (!r.ok || !j || !j.success) {
+                    const err = new Error((j && j.message) || this.options.i18n.verifyServer);
+                    err.code = (j && j.code) || ('http_' + r.status);
+                    throw err;
+                }
+                Object.assign(this._resolved, j.urls || {});
+            }));
+        }
+
+        resetTurnstile(wrapper) {
+            const eid = wrapper.getAttribute('data-turnstile-widget-id');
+            if (eid && typeof turnstile !== 'undefined') { try { turnstile.remove(eid); } catch (_) {} }
+            wrapper.removeAttribute('data-turnstile-widget-id');
+            wrapper.removeAttribute('data-turnstile-token');
+            const box = wrapper.querySelector('.pdf-turnstile-container');
+            if (box) box.remove();
+        }
+
+        showFacadeError(wrapper, text) {
+            const content = wrapper.querySelector('.pdf-facade-content');
+            if (!content) return;
+            content.classList.remove('is-loading');
+            const sp = content.querySelector('.pdf-loading-spinner');
+            if (sp) sp.remove();
+            const btns = content.querySelector('.pdf-facade-buttons');
+            const info = content.querySelector('.pdf-facade-info');
+            if (btns) btns.hidden = false;
+            if (info) info.hidden = false;
+            let msg = content.querySelector('.pdf-facade-error');
+            if (!msg) {
+                msg = document.createElement('p');
+                msg.className = 'pdf-turnstile-message is-error pdf-facade-error';
+                msg.setAttribute('role', 'alert');
+                if (btns) btns.insertAdjacentElement('afterend', msg); else content.appendChild(msg);
+            }
+            msg.textContent = text;
+        }
+
+        // Ensures the URLs for this wrapper are available, then runs cb(entry)
+        withServerUrls(wrapper, cb) {
+            const ref = this.getRef(wrapper);
+            if (this._resolved && this._resolved[ref]) { cb(this._resolved[ref]); return; }
+            if (wrapper.classList.contains('is-busy')) return;
+            wrapper.classList.add('is-busy');
+            const old = wrapper.querySelector('.pdf-facade-error');
+            if (old) old.remove();
+            this.loadTurnstileScript()
+                .then(() => this.initializeTurnstile(wrapper))
+                .then(token => { this.showSpinner(wrapper); return this.serverResolve(token); })
+                .then(() => {
+                    wrapper.classList.remove('is-busy');
+                    const e = this._resolved && this._resolved[ref];
+                    if (!e) throw Object.assign(new Error(this.options.i18n.verifyReload), { code: 'stale_refs' });
+                    cb(e);
+                })
+                .catch(err => {
+                    wrapper.classList.remove('is-busy');
+                    this.debug('server verify error:', err);
+                    this.resetTurnstile(wrapper); // tokens are single-use — next click gets a fresh widget
+                    if (err && err.message && /Turnstile/.test(err.message)) return; // widget already shows its message
+                    this.showFacadeError(wrapper, err && err.code === 'stale_refs' ? this.options.i18n.verifyReload : ((err && err.message) || this.options.i18n.verifyServer));
+                });
+        }
+
         handleViewPDF(wrapper) {
+            // Viewer JS/CSS (not the PDF itself) download in parallel with the
+            // Turnstile challenge and the verify request.
+            if (this.options.enableTurnstile && this.options.turnstileSiteKey) this.loadPDFEmbedderAssets().catch(() => {});
+            if (this.isServerMode(wrapper)) {
+                this.withServerUrls(wrapper, e => this._doLoadPDF(wrapper, e.src));
+                return;
+            }
             if (wrapper.classList.contains('is-busy')) return;
             if (this.options.enableTurnstile && this.options.turnstileSiteKey && !wrapper.getAttribute('data-turnstile-token')) {
                 wrapper.classList.add('is-busy');
@@ -329,10 +430,10 @@
             this._doLoadPDF(wrapper);
         }
 
-        _doLoadPDF(wrapper) {
+        _doLoadPDF(wrapper, resolvedSrc) {
             const iframe = this.getIframe(wrapper);
             if (!iframe) { this.debug('No iframe for facade'); return; }
-            const src = this.decryptURL(iframe.getAttribute('data-pdf-lazy-original-src-enc') || '');
+            const src = resolvedSrc || this.decryptURL(iframe.getAttribute('data-pdf-lazy-original-src-enc') || '');
             if (!src) return;
 
             wrapper.classList.add('is-busy');
@@ -345,20 +446,32 @@
                 iframe.classList.remove('pll-iframe-hidden');
                 iframe.removeAttribute('aria-hidden');
                 iframe.removeAttribute('tabindex');
+                iframe.removeAttribute('data-pll-ref');
                 iframe.src = src;
                 window.dispatchEvent(new Event('resize'));
                 this.debug('iframe restored:', iframe.getAttribute('data-pll-id'));
             });
         }
 
+        triggerDownload(url) {
+            if (!url) return;
+            const a = document.createElement('a');
+            a.href = url; a.download = ''; a.style.display = 'none';
+            document.body.appendChild(a); a.click(); a.remove();
+        }
+
         handleDownloadPDF(wrapper) {
-            const doDownload = () => {
-                const url = this.decryptURL(wrapper.getAttribute('data-pdf-url-enc') || '');
-                if (!url) return;
-                const a = document.createElement('a');
-                a.href = url; a.download = ''; a.style.display = 'none';
-                document.body.appendChild(a); a.click(); a.remove();
-            };
+            if (this.isServerMode(wrapper)) {
+                this.withServerUrls(wrapper, e => {
+                    const content = wrapper.querySelector('.pdf-facade-content');
+                    const sp = content && content.querySelector('.pdf-loading-spinner');
+                    if (sp) sp.remove();
+                    if (content) content.classList.remove('is-loading');
+                    this.triggerDownload(e.pdf);
+                });
+                return;
+            }
+            const doDownload = () => this.triggerDownload(this.decryptURL(wrapper.getAttribute('data-pdf-url-enc') || ''));
             if (this.options.enableTurnstile && this.options.turnstileSiteKey && !wrapper.getAttribute('data-turnstile-token')) {
                 this.loadTurnstileScript()
                     .then(() => this.initializeTurnstile(wrapper))
@@ -441,7 +554,7 @@
                 box.appendChild(slot);
                 try {
                     const wid = turnstile.render(slot, {
-                        sitekey: this.options.turnstileSiteKey, theme: 'light', size: 'normal',
+                        sitekey: this.options.turnstileSiteKey, theme: 'light', size: 'normal', action: 'pdf_view',
                         callback: token => { wrapper.setAttribute('data-turnstile-token', token); restore(); resolve(token); },
                         'error-callback':   () => { wrapper.removeAttribute('data-turnstile-token'); fail(t.verifyFailed);  reject(new Error('Turnstile failed')); },
                         'expired-callback': () => { wrapper.removeAttribute('data-turnstile-token'); fail(t.verifyExpired); reject(new Error('Turnstile expired')); }
