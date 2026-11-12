@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.4
+ * Version: 1.3.5
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.4' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.5' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -429,11 +429,17 @@ function pdf_lazy_loader_get_i18n() {
 function pdf_lazy_loader_enqueue_admin_scripts( $hook ) {
     if ( $hook !== 'settings_page_pdf-lazy-loader-settings' ) return;
     $settings = pdf_lazy_loader_get_settings();
-    wp_enqueue_style(  'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/admin.css', array(), PDF_LAZY_LOADER_VERSION );
+    // The live preview is built from the real facade markup and stylesheet
+    wp_enqueue_style(  'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css', array(), PDF_LAZY_LOADER_VERSION );
+    wp_enqueue_style(  'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/admin.css', array( 'pdf-lazy-loader' ), PDF_LAZY_LOADER_VERSION );
     wp_enqueue_script( 'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/admin.js',  array( 'jquery' ), PDF_LAZY_LOADER_VERSION, true );
+    $data = array_merge( $settings, array(
+        'i18n'            => pdf_lazy_loader_get_i18n(),
+        'enforceContrast' => (bool) apply_filters( 'pdf_lazy_loader_enforce_contrast', true ),
+    ) );
     wp_add_inline_script(
         'pdf-lazy-loader-admin',
-        'var pdfLazyLoaderAdmin = ' . wp_json_encode( $settings ) . ';',
+        'var pdfLazyLoaderAdmin = ' . wp_json_encode( $data ) . ';',
         'before'
     );
 }
@@ -538,47 +544,11 @@ function pdf_lazy_loader_register_verify_route() {
     ) );
 }
 
-// Cloudflare edge ranges (https://www.cloudflare.com/ips/). Used only to decide
-// whether the CF-Connecting-IP header can be trusted.
-function pdf_lazy_loader_cloudflare_ranges() {
-    return (array) apply_filters( 'pdf_lazy_loader_cloudflare_ranges', array(
-        '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18',
-        '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17',
-        '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
-        '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32',
-        '2a06:98c0::/29', '2c0f:f248::/32',
-    ) );
-}
-
-function pdf_lazy_loader_ip_in_cidr( $ip, $cidr ) {
-    $parts = explode( '/', (string) $cidr, 2 );
-    if ( count( $parts ) !== 2 || ! filter_var( $ip, FILTER_VALIDATE_IP ) || ! filter_var( $parts[0], FILTER_VALIDATE_IP ) ) return false;
-    $a    = inet_pton( $ip );
-    $b    = inet_pton( $parts[0] );
-    $bits = (int) $parts[1];
-    if ( $a === false || $b === false || strlen( $a ) !== strlen( $b ) || $bits < 0 || $bits > strlen( $a ) * 8 ) return false;
-    $bytes = intdiv( $bits, 8 );
-    $rem   = $bits % 8;
-    if ( $bytes > 0 && substr( $a, 0, $bytes ) !== substr( $b, 0, $bytes ) ) return false;
-    if ( $rem === 0 ) return true;
-    $mask = ( 0xFF << ( 8 - $rem ) ) & 0xFF;
-    return ( ord( $a[ $bytes ] ) & $mask ) === ( ord( $b[ $bytes ] ) & $mask );
-}
-
+// REMOTE_ADDR is used as is. Restoring the visitor address behind a proxy / CDN
+// (Cloudflare, nginx real_ip, Apache mod_remoteip) is the web server's job; if
+// the server does not do it, return the right address from the filter.
 function pdf_lazy_loader_client_ip() {
     $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
-    // Behind Cloudflare REMOTE_ADDR is an edge address shared by many visitors,
-    // which would make the per-IP rate limit hit real people. CF-Connecting-IP is
-    // trusted ONLY when the connection really comes from a Cloudflare range —
-    // from any other peer the header is spoofable and is ignored.
-    if ( $ip !== '' && ! empty( $_SERVER['HTTP_CF_CONNECTING_IP'] ) ) {
-        $cf = sanitize_text_field( wp_unslash( $_SERVER['HTTP_CF_CONNECTING_IP'] ) );
-        if ( filter_var( $cf, FILTER_VALIDATE_IP ) ) {
-            foreach ( pdf_lazy_loader_cloudflare_ranges() as $cidr ) {
-                if ( pdf_lazy_loader_ip_in_cidr( $ip, $cidr ) ) { $ip = $cf; break; }
-            }
-        }
-    }
     return (string) apply_filters( 'pdf_lazy_loader_client_ip', $ip );
 }
 
@@ -1210,7 +1180,7 @@ function pdf_lazy_loader_settings_page() {
 
         <div class="pll-info-card">
             <div class="pll-info-card__header"><span class="pll-section__icon">👁️</span><h2 class="pll-section__title">Live Preview</h2></div>
-            <p class="pll-info-card__desc">Facade appearance with current button color settings:</p>
+            <p class="pll-info-card__desc">The facade as visitors see it, with the current colors, heights and Download setting:</p>
             <div id="pdf-lazy-loader-preview"></div>
         </div>
     </div>
