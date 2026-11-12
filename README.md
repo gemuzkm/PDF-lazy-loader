@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.3.3
+# PDF Lazy Loader v1.3.4
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -109,6 +109,7 @@ Notes:
 - Rotating WordPress salts invalidates refs in already cached pages — visitors see "This page is outdated. Please reload it." until the cache is purged.
 - Refs in pages cached before 1.3.2 have no post ID; they are treated as one legacy group and keep working until the cache is refreshed.
 - Client IP for the rate limit: `REMOTE_ADDR`, replaced by `CF-Connecting-IP` only when `REMOTE_ADDR` is inside Cloudflare's published ranges (the list is bundled with the plugin and can become outdated — update it with the `pdf_lazy_loader_cloudflare_ranges` filter). From any other peer the header is ignored, because it can be forged. Without this, all visitors behind Cloudflare would share a few edge addresses and hit the limit together.
+- The `siteverify` answer must contain `action` = `pdf_view` and a `hostname` equal to the host of the WordPress home or site URL; an answer without them is rejected. If visitors reach the site under another host name (for example with and without `www`), return `false` from the `pdf_lazy_loader_verify_hostname` filter.
 - The PDF file itself stays a public static file: anyone who already knows its URL can download it. Server-side mode prevents extracting the URL from the page, it is not an access control on `wp-content/uploads`.
 
 ### Debug Settings
@@ -147,9 +148,10 @@ Path detector used everywhere:
 ### JavaScript
 
 - One delegated `click` listener for all facades (server-rendered and JS-fallback)
-- `loadPDFEmbedderAssets()` merges `pdfLazyLoaderData.pdfembAssets` + `window.pdfLazyLoaderLateAssets`; CSS in parallel, JS strictly sequential; dedup by file name; runs once
+- `loadPDFEmbedderAssets()` merges `pdfLazyLoaderData.pdfembAssets` + `window.pdfLazyLoaderLateAssets`; CSS in parallel, JS strictly sequential; an asset is skipped only when the same URL (query string ignored) is already on the page; runs once
 - `MutationObserver` is debounced (50 ms) and scans only added nodes
-- Iframes that did not pass through `the_content` (page builders, dynamic markup) are handled by the early `<head>` interceptor + JS fallback facade
+- Iframes that did not pass through `the_content` (page builders, dynamic markup) are handled by the early `<head>` interceptor + JS fallback facade. Iframes that carry only a sealed `data-pll-ref` (content taken from the REST API and inserted into a page) get the same JS facade
+- A facade looks for its iframe among its next siblings first, so repeated `pll-N` IDs on one page (content rendered twice, posts loaded via AJAX) do not mix up documents
 - Free PDF Embedder (`<a class="pdfemb-viewer">`, no iframe): no facade is possible, so its deferred assets are loaded immediately — the viewer is never left broken
 - Any verification failure (Turnstile `api.js` blocked, widget error / expiry, render error, server rejection) goes through one path: the facade gets its buttons back with a message, and the next click renders a fresh widget
 - URL obfuscation runs over UTF-8 bytes in both PHP and JS, so non-ASCII PDF URLs (e.g. Cyrillic file names) survive the round trip
@@ -180,6 +182,7 @@ pdf-lazy-loader/
 ├── pdf-lazy-loader.php
 ├── README.md
 ├── .github/workflows/
+│   ├── build-assets.yml
 │   ├── ci.yml
 │   └── release.yml
 └── assets/
@@ -189,7 +192,7 @@ pdf-lazy-loader/
     └── js/
         ├── admin.js
         ├── pdf-lazy-loader.js
-        └── pdf-lazy-loader.min.js   (used unless SCRIPT_DEBUG)
+        └── pdf-lazy-loader.min.js   (built by CI, used unless SCRIPT_DEBUG)
 ```
 
 ## Requirements
@@ -199,6 +202,13 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.3.4
+- **Security**: `/verify` requires `action` and `hostname` in the Cloudflare `siteverify` answer — a missing value is now rejected instead of skipped (`action` must be `pdf_view`, `hostname` must be the site host). Cloudflare's test keys stay exempt
+- **Fix**: REST responses (`content.rendered`) no longer contain facade markup — only the iframe without `src`, as documented. When such content is inserted into a page, the JS fallback adds the facade, sealed refs included
+- **Fix**: deferred assets are matched by URL without the query string instead of by file name, so files with similar names (`pdf.min.js` / `jspdf.min.js`) are not skipped
+- **Fix**: a facade opens its own iframe when `pll-N` IDs repeat on one page (content rendered twice, posts loaded via AJAX)
+- **Build**: `pdf-lazy-loader.min.js` is rebuilt with terser by GitHub Actions (`build-assets.yml`) whenever the source file changes
 
 ### v1.3.3
 - **Security**: `?pdfemb-data=` can no longer switch the facade and sealed refs off on a normal page or in REST output. In 1.3.2 any hand-made value that decoded to JSON with a `url` still did. The viewer request is now detected the same way PDF Embedder Premium detects it — front page + non-empty parameter, and only when Premium is loaded; on that request Premium prints the viewer and stops before any post content is rendered
@@ -292,19 +302,19 @@ Fixes for Google PageSpeed / Lighthouse findings:
 
 ## Development & Release
 
-CI (`.github/workflows/ci.yml`) runs on every push / PR to `main`: `php -l` on PHP 7.4–8.4, `node --check` for JS, version consistency (plugin header = `PDF_LAZY_LOADER_VERSION` = JS fallback), changelog entry `### vX.Y.Z` in README, and an up-to-date `pdf-lazy-loader.min.js`.
+CI (`.github/workflows/ci.yml`) runs on every push / PR to `main`: `php -l` on PHP 7.4–8.4, `node --check` for JS, version consistency (plugin header = `PDF_LAZY_LOADER_VERSION` = JS fallback), changelog entry `### vX.Y.Z` in README, and the presence of `pdf-lazy-loader.min.js`.
 
-Rebuild the minified JS after editing `assets/js/pdf-lazy-loader.js`:
+`pdf-lazy-loader.min.js` is built by `.github/workflows/build-assets.yml`: every push to `main` that changes `assets/js/pdf-lazy-loader.js` runs terser and commits the result as `github-actions[bot]`. Do not edit the minified file by hand. The same build can be run locally:
 
 ```bash
-npx terser assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js
+npx terser@5 assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js
 ```
 
 Release (`.github/workflows/release.yml`) is triggered by a `vX.Y.Z` tag. It verifies that the tag matches the plugin version, builds `pdf-lazy-loader-X.Y.Z.zip` (folder `pdf-lazy-loader/`, without `.git`/`.github`) plus `.sha256`, and publishes a GitHub Release with the notes from the matching `### vX.Y.Z` README section.
 
 ```bash
 # 1. bump Version: header, PDF_LAZY_LOADER_VERSION, JS fallback; add "### vX.Y.Z" to README
-# 2. commit & push to main, wait for green CI
+# 2. commit & push to main, wait for green CI and for the "build: rebuild pdf-lazy-loader.min.js" commit
 git pull
 git tag -a v1.2.1 -m "PDF Lazy Loader 1.2.1"
 git push origin v1.2.1

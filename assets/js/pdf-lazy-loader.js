@@ -24,7 +24,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.3',
+            version:          raw.version || '1.3.4',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
@@ -163,11 +163,16 @@
             return { css: Array.from(css.values()), js: Array.from(js.values()) };
         }
 
-        static fileOf(url) { return String(url).split('?')[0].split('#')[0].split('/').pop(); }
+        // Absolute URL without query / hash: tells whether an asset is already on
+        // the page. File names alone collide (pdf.min.js vs jspdf.min.js).
+        static urlKey(url) {
+            try { const u = new URL(String(url), window.location.href); return u.origin + u.pathname; }
+            catch (e) { return String(url).split('?')[0].split('#')[0]; }
+        }
 
         loadCSS(a) {
-            const file = PDFLazyLoader.fileOf(a.href);
-            const exists = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).some(l => l.href && l.href.includes(file));
+            const key = PDFLazyLoader.urlKey(a.href);
+            const exists = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).some(l => l.href && PDFLazyLoader.urlKey(l.href) === key);
             if (exists) return Promise.resolve();
             return new Promise(resolve => {
                 const link = document.createElement('link');
@@ -188,8 +193,8 @@
         }
 
         loadJS(a) {
-            const file = PDFLazyLoader.fileOf(a.src);
-            const exists = Array.from(document.querySelectorAll('script[src]')).some(s => s.src && s.src.includes(file));
+            const key = PDFLazyLoader.urlKey(a.src);
+            const exists = Array.from(document.querySelectorAll('script[src]')).some(s => s.src && PDFLazyLoader.urlKey(s.src) === key);
             if (exists) return Promise.resolve();
             return new Promise(resolve => {
                 const s = document.createElement('script');
@@ -232,6 +237,8 @@
 
             const enc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
             if (enc) return true;
+            // Sealed ref without a facade (content that came from the REST API)
+            if (iframe.getAttribute('data-pll-ref')) return true;
 
             const lower = (iframe.getAttribute('src') || iframe.getAttribute('data-src') || '').toLowerCase();
             if (SRC_INDICATORS.some(ind => lower.includes(ind))) return true;
@@ -257,11 +264,12 @@
             return url;
         }
 
-        facadeHTML(id, pdfUrl) {
+        // sealed: the iframe carries data-pll-ref, the download URL comes from the server
+        facadeHTML(id, pdfUrl, sealed) {
             const t = this.options.i18n;
-            const dl = this.options.enableDownload && pdfUrl;
+            const dl = this.options.enableDownload && (pdfUrl || sealed);
             return '<div class="pdf-facade-wrapper pdf-lazy-loader-wrapper" data-pll-target="' + id + '"' +
-                (dl ? ' data-pdf-url-enc="' + escapeHTML(this.encryptURL(pdfUrl)) + '"' : '') + '>' +
+                (dl && pdfUrl ? ' data-pdf-url-enc="' + escapeHTML(this.encryptURL(pdfUrl)) + '"' : '') + '>' +
                 '<div class="pdf-facade-container pdf-lazy-loader-facade"><div class="pdf-facade-content">' +
                 '<div class="pdf-facade-icon" aria-hidden="true">PDF</div>' +
                 '<div class="pdf-facade-title">' + escapeHTML(t.title) + '</div>' +
@@ -273,17 +281,23 @@
         }
 
         processIframe(iframe) {
+            if (!iframe.parentNode) return;
+            // Server mode: the URL is sealed in data-pll-ref and released by the REST
+            // endpoint, so there is nothing to decode here — the iframe only gets a facade.
+            const sealed = !!iframe.getAttribute('data-pll-ref');
             let src = '';
-            const enc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
-            if (enc) src = this.decryptURL(enc);
-            else src = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
-            if (!src || !iframe.parentNode) return;
+            if (!sealed) {
+                const enc = iframe.getAttribute('data-pdf-lazy-original-src-enc');
+                if (enc) src = this.decryptURL(enc);
+                else src = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
+                if (!src) return;
 
-            // Never strip the src unless a restorable copy exists
-            const stored = enc || this.encryptURL(src);
-            if (!stored) return;
-            if (!enc) iframe.setAttribute('data-pdf-lazy-original-src-enc', stored);
-            iframe.removeAttribute('src');
+                // Never strip the src unless a restorable copy exists
+                const stored = enc || this.encryptURL(src);
+                if (!stored) return;
+                if (!enc) iframe.setAttribute('data-pdf-lazy-original-src-enc', stored);
+                iframe.removeAttribute('src');
+            }
             iframe.removeAttribute('data-pdf-lazy-intercepted');
 
             const id = 'pll-js-' + (++this.idCounter);
@@ -293,7 +307,7 @@
             iframe.setAttribute('tabindex', '-1');
             iframe.classList.add('pll-iframe-hidden');
 
-            iframe.insertAdjacentHTML('beforebegin', this.facadeHTML(id, this.resolvePdfUrl(src)));
+            iframe.insertAdjacentHTML('beforebegin', this.facadeHTML(id, sealed ? '' : this.resolvePdfUrl(src), sealed));
             const wrapper = iframe.previousElementSibling;
             if (wrapper && width) wrapper.style.maxWidth = width;
             this.debug('Facade inserted (JS fallback):', id);
@@ -330,7 +344,14 @@
         // ------------------------------------------------------------------
         getIframe(wrapper) {
             const id = wrapper.getAttribute('data-pll-target');
-            return id ? document.querySelector('iframe[data-pll-id="' + id + '"]') : null;
+            if (!id) return null;
+            // The facade is printed right before its iframe. Looking at the siblings
+            // first keeps the pair together when IDs repeat on a page (content
+            // rendered twice, posts loaded via AJAX).
+            for (let n = wrapper.nextElementSibling, i = 0; n && i < 3; n = n.nextElementSibling, i++) {
+                if (n.tagName === 'IFRAME' && n.getAttribute('data-pll-id') === id) return n;
+            }
+            return document.querySelector('iframe[data-pll-id="' + id + '"]');
         }
 
         showSpinner(wrapper) {
@@ -349,7 +370,7 @@
         // ------------------------------------------------------------------
         // Server-side verification mode (verifyUrl set): the iframe carries an
         // encrypted data-pll-ref; URLs are released by the REST endpoint after
-        // Cloudflare siteverify. One token resolves ALL refs on the page.
+        // Cloudflare siteverify. One token releases the refs of one post.
         // ------------------------------------------------------------------
         getRef(wrapper) {
             const iframe = this.getIframe(wrapper);
