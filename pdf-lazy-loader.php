@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.3
+ * Version: 1.3.4
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.3' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.4' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -668,15 +668,19 @@ function pdf_lazy_loader_rest_verify( WP_REST_Request $request ) {
     $out = json_decode( wp_remote_retrieve_body( $res ), true );
     $ok  = is_array( $out ) && ! empty( $out['success'] );
 
-    // Action must match what the widget was rendered with
-    if ( $ok && ! empty( $out['action'] ) && $out['action'] !== 'pdf_view' ) $ok = false;
-
-    // Hostname must be this site (skipped for Cloudflare's dummy test secrets)
+    // Cloudflare's dummy test secrets return hostname "example.com" and no action
     $secret  = $body['secret'];
     $is_test = (bool) preg_match( '/^[123]x0{30,}AA$/', $secret );
-    if ( $ok && ! $is_test && apply_filters( 'pdf_lazy_loader_verify_hostname', true ) && ! empty( $out['hostname'] ) ) {
+
+    // Action must be present and match what the widget was rendered with
+    $action = ( $ok && isset( $out['action'] ) && is_string( $out['action'] ) ) ? $out['action'] : '';
+    if ( $ok && $action !== 'pdf_view' && ! ( $is_test && $action === '' ) ) $ok = false;
+
+    // Hostname must be present and be this site
+    if ( $ok && ! $is_test && apply_filters( 'pdf_lazy_loader_verify_hostname', true ) ) {
         $hosts = array_unique( array_filter( array( wp_parse_url( home_url(), PHP_URL_HOST ), wp_parse_url( site_url(), PHP_URL_HOST ) ) ) );
-        if ( ! in_array( strtolower( $out['hostname'] ), array_map( 'strtolower', $hosts ), true ) ) $ok = false;
+        $host  = ( isset( $out['hostname'] ) && is_string( $out['hostname'] ) ) ? strtolower( $out['hostname'] ) : '';
+        if ( $host === '' || ! in_array( $host, array_map( 'strtolower', $hosts ), true ) ) $ok = false;
     }
 
     if ( ! $ok ) {
@@ -770,7 +774,9 @@ function pdf_lazy_loader_facade_html( $id, $pdf_url, $max_width = '' ) {
 function pdf_lazy_loader_filter_content( $content, $with_facade = true ) {
     if ( is_admin() || pdf_lazy_loader_is_pdfemb_viewer_request() ) return $content;
     if ( empty( $content ) || stripos( $content, '<iframe' ) === false ) return $content;
-    if ( is_feed() ) $with_facade = false;
+    // No facade in feeds and REST responses: those consumers do not run this
+    // plugin's JS. REST content injected into a page gets the JS fallback facade.
+    if ( is_feed() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) $with_facade = false;
 
     $out = preg_replace_callback( '/<iframe\b([^>]*?)>/is', function( $matches ) use ( $with_facade ) {
         $attrs = $matches[1];
@@ -1163,7 +1169,7 @@ function pdf_lazy_loader_settings_page() {
                                 Validate the Turnstile token on the server (Cloudflare <code>siteverify</code>) before the PDF URL is released.
                                 The page HTML then contains only an AES-256-GCM encrypted reference instead of the XOR-obfuscated URL,
                                 so the PDF cannot be extracted from the source or opened by calling JS from the console.<br>
-                                Cost: one REST request <code>POST /wp-json/pdf-lazy-loader/v1/verify</code> per page view on the first click
+                                Cost: one REST request <code>POST /wp-json/pdf-lazy-loader/v1/verify</code> per post with PDFs, on the first click
                                 (+ one outbound HTTPS call to Cloudflare, typically 30–200&nbsp;ms), no database writes.
                                 If you filter REST in Cloudflare WAF, allow this route.
                             </span>
