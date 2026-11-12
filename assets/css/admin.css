@@ -9,6 +9,7 @@
     --pll-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --pll-teal:       #21808d;
     --pll-teal-hover: #1d748a;
+    --pll-teal-dark:  #1a6570;
     --pll-teal-light: rgba(33,128,141,.10);
     --pll-teal-ring:  rgba(33,128,141,.30);
     --pll-text:       #1f2122;
@@ -118,7 +119,7 @@
     display: inline-block;
     padding: 2px 7px;
     background: var(--pll-teal-light);
-    color: var(--pll-teal);
+    color: var(--pll-teal-dark);
     border-radius: 20px;
     font-size: 11px;
     font-weight: 500;
@@ -336,21 +337,47 @@
     padding: 20px;
 }
 
+/* The preview is the real facade markup + stylesheet; its buttons do nothing */
+#pdf-lazy-loader-preview .pdf-facade-wrapper {
+    margin-bottom: 0;
+}
+
+#pdf-lazy-loader-preview .pdf-view-button,
+#pdf-lazy-loader-preview .pdf-download-button {
+    cursor: default;
+    font-family: inherit;
+}
+
+.pdf-lazy-loader-settings .pll-preview-note {
+    margin: 10px 0 0;
+}
+
 /* ---- WP notices inside our wrap ---- */
 .pdf-lazy-loader-settings .notice,
 .pdf-lazy-loader-settings .updated {
     margin: 0 0 20px !important;
+}
+
+/* Only success notices get the accent color; errors and warnings keep theirs */
+.pdf-lazy-loader-settings .notice-success,
+.pdf-lazy-loader-settings .updated {
     border-left-color: var(--pll-teal) !important;
 }
 
-/* ---- Links ---- */
+/* ---- Links (underlined: not distinguished by color alone) ---- */
 .pdf-lazy-loader-settings a {
-    color: var(--pll-teal);
-    text-decoration: none;
+    color: var(--pll-teal-dark);
+    text-decoration: underline;
 }
 .pdf-lazy-loader-settings a:hover {
     color: var(--pll-teal-hover);
-    text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pll-toggle__slider,
+    .pll-toggle__slider::after {
+        transition: none;
+    }
 }
 
 /* ---- Responsive ---- */

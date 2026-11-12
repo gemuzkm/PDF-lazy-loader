@@ -24,7 +24,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.4',
+            version:          raw.version || '1.3.5',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
@@ -112,9 +112,9 @@
                 else this.handleDownloadPDF(wrapper);
             });
 
-            // Preload on intent: static viewer assets (and Turnstile api.js)
-            // start downloading on hover/focus/touch — the PDF itself is NOT
-            // requested until the click (and verification).
+            // Preload on intent: the browser starts downloading the static viewer
+            // files (and Turnstile api.js) on hover/focus/touch. Nothing is executed
+            // and the PDF itself is NOT requested until the click (and verification).
             const onIntent = e => {
                 const w = e.target.closest && e.target.closest('.pdf-lazy-loader-wrapper');
                 if (!w || w.closest('#pdf-lazy-loader-preview')) return;
@@ -136,12 +136,28 @@
             }
         }
 
+        // <link rel="preload"> only puts the files into the browser cache: no viewer
+        // script runs and no stylesheet is applied before the click. On click the
+        // real <link>/<script> tags are served from that cache.
         preload() {
             if (this._preloaded) return;
             this._preloaded = true;
             this.debug('Intent detected — preloading assets');
-            this.loadPDFEmbedderAssets().catch(() => {});
-            if (this.options.enableTurnstile && this.options.turnstileSiteKey) this.loadTurnstileScript().catch(() => {});
+            const { css, js } = this.collectAssets();
+            css.forEach(a => this.addPreload(a.href, 'style'));
+            js.forEach(a => this.addPreload(a.src, 'script'));
+            if (this.options.enableTurnstile && this.options.turnstileSiteKey) {
+                this.addPreload('https://challenges.cloudflare.com/turnstile/v0/api.js', 'script');
+            }
+        }
+
+        addPreload(href, as) {
+            if (!href || !document.head) return;
+            const link = document.createElement('link');
+            link.rel = 'preload';
+            link.as = as;
+            link.href = href;
+            document.head.appendChild(link);
         }
 
         // ------------------------------------------------------------------

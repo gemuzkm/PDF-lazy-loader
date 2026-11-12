@@ -1,329 +1,135 @@
-# PDF Lazy Loader v1.3.4
+# PDF Lazy Loader
 
-WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
+Click-to-load facade for **PDF Embedder Premium** on WordPress. The viewer iframe, the PDF file and the viewer's CSS/JS are not requested until a visitor clicks **View PDF** — optionally after a Cloudflare Turnstile check.
 
-## Features
+## What it does
 
-- **Server-rendered facade**: the placeholder is part of the HTML (`the_content` filter) — visible before any JS runs, no layout shift (CLS), page-cache friendly
-- **Zero PDF assets on page load**: PDF Embedder CSS/JS (including `pdfemb-fullscreen.min.css` enqueued inside `Viewer::render()`) are captured and loaded only on click
-- **Localized data preserved**: `wp_localize_script()` / `wp_add_inline_script()` data attached to PDF Embedder handles (e.g. `pdfemb_trans`) is carried over, so deferred scripts work exactly as when loaded normally
-- **Fast click-to-view**: minimum spinner time runs *in parallel* with asset loading (default 300 ms); static viewer assets are preloaded on hover / focus / touch
-- **Cloudflare Turnstile**: optional verification before the PDF loads (widget script is also preloaded on intent)
-- **Server-side Turnstile verification** (optional): token checked via Cloudflare `siteverify`; the page contains only an AES-256-GCM encrypted reference, the PDF URL is released by a REST endpoint after verification
-- **URL obfuscation**: iframe `src` is replaced by an XOR + Base64 copy in `data-pdf-lazy-original-src-enc`
-- **Responsive facade**: heights per breakpoint via CSS custom properties and `@media` (no resize listeners)
-- **Accessible by default (WCAG AA)**: button/icon colors are auto-darkened (same hue) until white text reaches 4.5:1; all facade texts meet 4.5:1; no heading tags in the facade (does not break the page heading outline)
-- **No render-blocking request**: facade CSS (~3 KB) is inlined in `<head>`; frontend JS is minified (`pdf-lazy-loader.min.js`, ~4 KB gzip) and deferred
-- **Download button** (optional), **Debug mode**, translatable strings (`pdf-lazy-loader` text domain)
-- **WordPress 7.x**: tested up to 7.1, requires PHP 7.4+, script tags via `wp_get_inline_script_tag()` (CSP-nonce friendly), frontend JS with `defer` strategy
-
-## How It Works
-
-### Page Load (before user interaction)
-
-1. **Detection** — `pdf_lazy_loader_has_pdf_iframes()` checks every post of the main query (single pages, blog index, archives, search). Result is memoized per request (tri-state); pages without PDF are not touched at all — no CSS/JS/inline script from this plugin is printed there
-2. **`the_content:999`** — each PDF iframe gets its `src` removed (obfuscated copy kept in a data attribute), the class `pll-iframe-hidden`, and a server-side facade is printed right before it
-3. **Layer 1** — `wp_enqueue_scripts:999`: queued PDF Embedder styles/scripts are collected (final URL incl. `?ver=`, deps in order, localized data, inline before/after) and dequeued
-4. **Layer 2** — `wp_footer:1`: same collection after all shortcodes ran — catches `pdf-fullscreen` (`pdfemb-fullscreen.min.css`) enqueued inside `Viewer::render()`
-5. **ob_start** — `template_redirect:1`: one `preg_replace_callback` pass strips any PDF Embedder `<link>`/`<script src>` printed outside the queue and prints the final list once as `window.pdfLazyLoaderLateAssets` before `</body>` (Layer 3 `wp_footer:2` is used only as a fallback when the buffer is not active)
-6. The PDF Embedder viewer request itself (`/?pdfemb-data=…`, rendered inside the iframe) is never modified
-
-### On Hover / Focus / Touch
-
-Viewer CSS/JS (and Turnstile `api.js`, when enabled) start downloading in the background. The PDF file and the viewer iframe are **not** requested yet.
-
-### On Click ("View PDF")
-
-1. If Turnstile is enabled — the widget is shown first
-2. Viewer assets (already cached after preload) and the minimum spinner delay are awaited in parallel
-3. The facade is removed, the iframe `src` is restored — PDF Embedder works as usual, including fullscreen
-
-## Installation
-
-1. Upload the plugin folder to `/wp-content/plugins/`
-2. Activate it in **Plugins**
-3. Configure it in **Settings → PDF Lazy Loader**
-
-## Configuration
-
-### Basic Settings
-
-| Setting | Description | Default |
-|---|---|---|
-| Button Color | Color of the "View PDF" button and PDF icon (auto-darkened for contrast if needed: `#FF6B6B` → `#C25151`) | `#FF6B6B` |
-| Button Hover Color | Color on hover / focus | `#E63946` |
-| Minimum Loading Time | Minimum spinner time in ms (0–5000), runs in parallel with asset loading | `300` |
-| Show Download Button | Enable/disable the download button | Off |
-
-On upgrade from ≤ 1.1.1 the old default `1500` is migrated to `300` once; any other custom value is kept.
-
-### Facade Heights
-
-| Breakpoint | Range | Default |
-|---|---|---|
-| Desktop | ≥ 1024px | 600px |
-| Tablet | 768px – 1023px | 500px |
-| Mobile | < 768px | 400px |
-
-### Cloudflare Turnstile
-
-- **Enable Turnstile** — show the verification widget before the PDF loads
-- **Site Key** — your Turnstile site key ([Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/turnstile))
-- **Secret Key** — used only by server-side verification; never sent to the browser and never printed back into the settings form (leave the field empty to keep the stored key)
-- **Server-side verification** — see below
-
-### Server-side verification (optional, off by default)
-
-Requires: Turnstile enabled + Site Key + Secret Key + PHP OpenSSL (`aes-256-gcm`). If any is missing the plugin silently stays in client-side mode and the settings page shows *Not active*.
-
-| | Client-side mode (default) | Server-side mode |
-|---|---|---|
-| What is in the HTML | XOR + Base64 copy of the iframe `src` / download URL (key is public) | AES-256-GCM sealed reference `data-pll-ref` (key derived from `wp_salt('auth')`, never leaves the server) |
-| Bot reads the HTML | Can decode the URL | Gets nothing usable |
-| Bot calls JS from the console | Gets the PDF | Needs a valid Turnstile token |
-| Turnstile token | Checked in the browser only | Checked by Cloudflare `siteverify` (single-use, action `pdf_view`, hostname = this site) |
-| Extra server work | none | 1 REST request per post with PDFs, on the first click |
-
-Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `{token, refs[]}` → refs are decrypted locally (forged / stale refs are rejected **before** any outbound call) → one `siteverify` call → URLs for the PDFs **of one post** are returned. Each sealed ref carries the ID of the post it was rendered in; the browser sends the clicked PDF first and the endpoint releases only the refs with the same post ID, so refs collected from other pages cannot be unlocked with the same token. Other PDFs of that post open without a second challenge; on archive pages every post needs its own challenge. Viewer CSS/JS download in parallel with the challenge.
-
-**Latency** (measured on a local test site, Cloudflare `siteverify` from the server ≈ 60–70 ms):
-
-| Step | Typical | Notes |
-|---|---|---|
-| Turnstile challenge | 0.3–3 s | Same as client-side mode; managed mode is often invisible. Not added by this option |
-| `verify` request round-trip | +80–150 ms | WordPress REST bootstrap (~15–25 ms PHP) + `siteverify` (30–200 ms depending on hosting location) + browser↔server RTT |
-| Worst case | 5 s | `siteverify` timeout (filter `pdf_lazy_loader_verify_timeout`), then an error with retry; the PDF is **not** released (fail-closed) |
-
-**Server load**:
-
-| | Cost |
-|---|---|
-| Page render | one `openssl_encrypt` per PDF iframe (~3 µs). No DB queries. Compatible with full-page cache |
-| `verify` request | one uncached WordPress REST bootstrap (~6 MB RAM, ~20 ms CPU, only the standard autoload option reads) + one outbound HTTPS request. **No DB writes**, no sessions, no transients |
-| Forged / garbage requests | rejected locally in < 1 ms of plugin code, no `siteverify` call |
-| Rate limit | 20 req/min/IP (filter `pdf_lazy_loader_verify_rate_limit`) — only when a persistent object cache (Redis/Memcached) is present; without it no limit is applied, to avoid DB writes. Behind Cloudflare the visitor IP is taken from `CF-Connecting-IP`, but only when the connection really comes from a Cloudflare address (see Notes) |
-
-Notes:
-- If Cloudflare WAF filters REST on your site, allow `POST /wp-json/pdf-lazy-loader/v1/verify`. The endpoint answers with `Cache-Control: no-store` and a `Server-Timing` header (`wp_boot` — WordPress + plugins bootstrap before the handler, `decrypt`, `siteverify`, `total` — plugin handler) visible in DevTools. If the browser-side time is much larger than `wp_boot + total`, the rest is network / proxy (e.g. Cloudflare) time.
-- Turnstile needs `https://challenges.cloudflare.com` in CSP `script-src` and `frame-src` (if your site sends a Content-Security-Policy).
-- Rotating WordPress salts invalidates refs in already cached pages — visitors see "This page is outdated. Please reload it." until the cache is purged.
-- Refs in pages cached before 1.3.2 have no post ID; they are treated as one legacy group and keep working until the cache is refreshed.
-- Client IP for the rate limit: `REMOTE_ADDR`, replaced by `CF-Connecting-IP` only when `REMOTE_ADDR` is inside Cloudflare's published ranges (the list is bundled with the plugin and can become outdated — update it with the `pdf_lazy_loader_cloudflare_ranges` filter). From any other peer the header is ignored, because it can be forged. Without this, all visitors behind Cloudflare would share a few edge addresses and hit the limit together.
-- The `siteverify` answer must contain `action` = `pdf_view` and a `hostname` equal to the host of the WordPress home or site URL; an answer without them is rejected. If visitors reach the site under another host name (for example with and without `www`), return `false` from the `pdf_lazy_loader_verify_hostname` filter.
-- The PDF file itself stays a public static file: anyone who already knows its URL can download it. Server-side mode prevents extracting the URL from the page, it is not an access control on `wp-content/uploads`.
-
-### Debug Settings
-
-- **Enable Debug Mode** — detailed logs in the browser console; disable in production
-
-## Security Notes
-
-- The URL "encryption" is **obfuscation** (XOR + Base64 with a key that is public in the page source). It defeats naive HTML parsers, not a determined scraper
-- In client-side mode Turnstile is verified in the browser only — it filters casual bots, but is not a server-side access control. Enable **Server-side verification** for a real check (the URL is then not present in the HTML at all)
-- What really protects against bots here: no PDF URL in plain text, no viewer iframe and no viewer/PDF requests until a real interaction happens
-- The plugin steps aside only for the PDF Embedder Premium viewer request, detected the same way Premium detects it: the front page with a non-empty `?pdfemb-data=`, with Premium loaded. Premium then prints the viewer and stops, so no post content is rendered for that request. On any other URL and in REST responses the parameter is ignored and cannot switch the facade off. The condition was taken from Premium's `Viewer::is_viewer()`; if a Premium build detects the viewer differently, this check has to be updated
-
-## Technical Details
-
-### Asset capture
-
-Only **queued** PDF Embedder handles are collected (registered-but-unused files such as the free plugin's `pdf.js` when Premium renders the shortcode are never loaded). For every handle:
-
-| Field | Source |
-|---|---|
-| `src` / `href` | built like `WP_Scripts`/`WP_Styles`: `base_url` for relative paths, `?ver=` (`default_version` when `ver === false`), `script_loader_src` / `style_loader_src` filters |
-| `before` | `get_data( $handle, 'data' )` (`wp_localize_script`) + `before` inline scripts — printed immediately in the page (tiny, must exist before the deferred file) |
-| `after` | `after` inline scripts — executed right after the deferred file loads |
-| `media` / `inline` (CSS) | style `args` and `wp_add_inline_style()` content |
-
-PDF Embedder dependencies are collected recursively in dependency order; non-PDF-Embedder deps (e.g. `jquery`) stay enqueued.
-
-Path detector used everywhere:
-
-```php
-'/PDFEmbedder-premium-secure/', '/PDFEmbedder-premium/',
-'/pdf-embedder-premium/', '/pdf-embedder/', '/pdfemb/'
-```
-
-### JavaScript
-
-- One delegated `click` listener for all facades (server-rendered and JS-fallback)
-- `loadPDFEmbedderAssets()` merges `pdfLazyLoaderData.pdfembAssets` + `window.pdfLazyLoaderLateAssets`; CSS in parallel, JS strictly sequential; an asset is skipped only when the same URL (query string ignored) is already on the page; runs once
-- `MutationObserver` is debounced (50 ms) and scans only added nodes
-- Iframes that did not pass through `the_content` (page builders, dynamic markup) are handled by the early `<head>` interceptor + JS fallback facade. Iframes that carry only a sealed `data-pll-ref` (content taken from the REST API and inserted into a page) get the same JS facade
-- A facade looks for its iframe among its next siblings first, so repeated `pll-N` IDs on one page (content rendered twice, posts loaded via AJAX) do not mix up documents
-- Free PDF Embedder (`<a class="pdfemb-viewer">`, no iframe): no facade is possible, so its deferred assets are loaded immediately — the viewer is never left broken
-- Any verification failure (Turnstile `api.js` blocked, widget error / expiry, render error, server rejection) goes through one path: the facade gets its buttons back with a message, and the next click renders a fresh widget
-- URL obfuscation runs over UTF-8 bytes in both PHP and JS, so non-ASCII PDF URLs (e.g. Cyrillic file names) survive the round trip
-
-### Filters
-
-| Filter | Purpose |
-|---|---|
-| `pdf_lazy_loader_has_pdf` | Override page-level PDF detection (`bool`) |
-| `pdf_lazy_loader_enforce_contrast` | `false` — use button colors exactly as entered (no WCAG adjustment) |
-| `pdf_lazy_loader_inline_css` | `false` — load `pdf-lazy-loader.css` as an external file instead of inlining |
-| `pdf_lazy_loader_verify_timeout` | `siteverify` timeout, seconds (default `5`) |
-| `pdf_lazy_loader_verify_rate_limit` | Requests per minute per IP for `/verify` (default `20`, `0` = off; needs persistent object cache) |
-| `pdf_lazy_loader_verify_hostname` | `false` — do not compare `siteverify` hostname with the site host |
-| `pdf_lazy_loader_verify_send_ip` | `true` — send `remoteip` to `siteverify` |
-| `pdf_lazy_loader_client_ip` | Final client IP used for rate limit / `remoteip` (default: `REMOTE_ADDR`, or `CF-Connecting-IP` when the request comes from a Cloudflare range) |
-| `pdf_lazy_loader_cloudflare_ranges` | List of CIDR ranges from which `CF-Connecting-IP` is trusted (default: Cloudflare's published IPv4/IPv6 ranges; return an empty array to never trust the header) |
-
-### Content filters
-
-- `the_content`, `widget_text`, `widget_block_content` — facade + obfuscated iframe
-- `rest_prepare_{post_type}` for every public post type with REST — obfuscated iframe, no facade markup
-
-## File Structure
-
-```
-pdf-lazy-loader/
-├── pdf-lazy-loader.php
-├── README.md
-├── .github/workflows/
-│   ├── build-assets.yml
-│   ├── ci.yml
-│   └── release.yml
-└── assets/
-    ├── css/
-    │   ├── admin.css
-    │   └── pdf-lazy-loader.css
-    └── js/
-        ├── admin.js
-        ├── pdf-lazy-loader.js
-        └── pdf-lazy-loader.min.js   (built by CI, used unless SCRIPT_DEBUG)
-```
+- **Lighter pages.** Nothing PDF-related loads with the page. The facade is plain HTML rendered on the server with its CSS inlined, so it appears with the first paint, causes no layout shift and works with full-page caching.
+- **Fewer automated downloads.** The PDF address is not present in the page source in readable form. With server-side verification it is not in the page at all until Turnstile is passed.
+- **Unchanged viewer.** After the click PDF Embedder works as usual, including fullscreen.
+- **Accessible facade.** Button colors are darkened automatically until white text reaches WCAG AA contrast (4.5:1), and the facade adds no headings to the page outline.
 
 ## Requirements
 
-- WordPress 5.7+ (tested up to 7.1)
-- PHP 7.4+
-- PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
+- WordPress 5.7 or later (tested up to 7.1), PHP 7.4 or later
+- PDF Embedder Premium (Legacy) 5.3.x with the free PDF Embedder plugin active
+- For server-side verification: Cloudflare Turnstile site and secret keys, PHP OpenSSL with `aes-256-gcm`
 
-## Version History
+## Installation
+
+1. Upload the plugin folder to `/wp-content/plugins/`, or install the ZIP from the [Releases](https://github.com/gemuzkm/PDF-lazy-loader/releases) page.
+2. Activate the plugin.
+3. Open **Settings → PDF Lazy Loader**.
+
+## Settings
+
+| Setting | Default | Notes |
+|---|---|---|
+| Button Color / Button Hover Color | `#FF6B6B` / `#E63946` | Shown darker when contrast requires it (`#C25151` / `#A54545` for the defaults) |
+| Minimum Loading Time | 300 ms | Minimum spinner time, 0–5000 ms; runs in parallel with loading the viewer files |
+| Show Download Button | Off | Adds a Download button next to View PDF |
+| Facade height: desktop / tablet / mobile | 600 / 500 / 400 px | Breakpoints: ≥ 1024 px, 768–1023 px, < 768 px |
+| Enable Turnstile | Off | Shows the Turnstile widget before a PDF is opened or downloaded |
+| Site Key, Secret Key | — | The secret key is used only on the server and is never printed back into the form |
+| Server-side verification | Off | See [Turnstile modes](#turnstile-modes) |
+| Debug Mode | Off | Logs to the browser console; keep it off in production |
+
+## How it works
+
+1. **Page render.** In post content every PDF iframe loses its `src`, and a facade is printed in front of it. PDF Embedder's styles and scripts are held back.
+2. **Hover, focus or touch.** The browser preloads the viewer files (`<link rel="preload">`). Nothing is executed and the PDF is not requested.
+3. **Click.** Turnstile runs if it is enabled, the viewer files are applied, and the iframe gets its `src` back.
+
+Iframes that do not come from post content (page builders, content inserted by scripts) get the same facade from JavaScript. Pages without PDFs are not touched.
+
+## Turnstile modes
+
+| | Client-side (default) | Server-side |
+|---|---|---|
+| In the page source | Obfuscated copy of the address (XOR + Base64, public key) | AES-256-GCM sealed reference; the key never leaves the server |
+| Token check | In the browser only | Cloudflare `siteverify`, called by the server |
+| Extra cost | None | One REST request per post with PDFs, on the first click; no database writes |
+
+Notes on server-side verification:
+
+- One solved challenge opens the PDFs of one post. On archive pages each post asks for its own check.
+- The `siteverify` answer must carry the action `pdf_view` and the site's host name. If the site is reachable under several host names, turn the host check off with the `pdf_lazy_loader_verify_hostname` filter.
+- If Cloudflare cannot be reached within 5 seconds, the PDF is not released and the visitor can try again.
+- Allow `POST /wp-json/pdf-lazy-loader/v1/verify` in your firewall rules. A Content-Security-Policy needs `https://challenges.cloudflare.com` in `script-src` and `frame-src`.
+- Requests are limited to 20 per minute per IP address when a persistent object cache (Redis, Memcached) is available; without one there is no limit. The address is `REMOTE_ADDR`: behind a proxy or CDN the web server has to restore the visitor address.
+- Changing the WordPress salts invalidates the references in cached pages; purge the page cache afterwards.
+
+## Limits
+
+- Client-side mode is obfuscation, not protection: it stops simple HTML scrapers, not someone who runs the page's JavaScript.
+- Server-side mode hides the address until Turnstile is passed, but the PDF remains a public file. Anyone who already knows its URL can download it.
+- The facade needs the iframe that PDF Embedder **Premium** renders. With only the free plugin there is no iframe, so no facade is shown and the viewer loads normally.
+
+## For developers
+
+| Filter | Purpose |
+|---|---|
+| `pdf_lazy_loader_has_pdf` | Override the per-page PDF detection (`bool`) |
+| `pdf_lazy_loader_enforce_contrast` | `false` — use the button colors exactly as entered |
+| `pdf_lazy_loader_inline_css` | `false` — load the facade stylesheet as a file instead of inlining it |
+| `pdf_lazy_loader_verify_timeout` | `siteverify` timeout in seconds (default `5`) |
+| `pdf_lazy_loader_verify_rate_limit` | Requests per minute per IP for `/verify` (default `20`, `0` turns it off) |
+| `pdf_lazy_loader_verify_hostname` | `false` — do not compare the `siteverify` host name with the site host |
+| `pdf_lazy_loader_verify_send_ip` | `true` — send the visitor address to `siteverify` |
+| `pdf_lazy_loader_client_ip` | Visitor address used for the rate limit (default `REMOTE_ADDR`) |
+
+REST API responses (`content.rendered`) contain the iframe without `src` and no facade markup.
+
+Build and release:
+
+- `assets/js/pdf-lazy-loader.min.js` is built with terser by the **Build assets** workflow on every push that changes the source file. Do not edit it by hand.
+- **CI** checks PHP syntax on 7.4–8.4, JavaScript syntax, that the version is the same in the plugin header, `PDF_LAZY_LOADER_VERSION` and the JS fallback, and that this file has a `### vX.Y.Z` entry.
+- Pushing a `vX.Y.Z` tag runs the **Release** workflow: it builds the ZIP and publishes it with the notes from the matching changelog entry.
+
+```bash
+git pull    # brings in the "build: rebuild pdf-lazy-loader.min.js" commit
+git tag -a v1.3.5 -m "PDF Lazy Loader 1.3.5"
+git push origin v1.3.5
+```
+
+## Changelog
+
+### v1.3.5
+- Hover, focus and touch now only preload the viewer files (`<link rel="preload">`); viewer scripts run after the click
+- Removed the bundled Cloudflare address list and the `pdf_lazy_loader_cloudflare_ranges` filter. The visitor address is `REMOTE_ADDR`; restoring it behind a proxy is the web server's job (the `pdf_lazy_loader_client_ip` filter remains)
+- Settings page: the live preview is the real facade and follows color, height and Download changes; only the "Settings saved" notice is dismissed automatically; error notices keep their colors; unused code removed
+- README rewritten
 
 ### v1.3.4
-- **Security**: `/verify` requires `action` and `hostname` in the Cloudflare `siteverify` answer — a missing value is now rejected instead of skipped (`action` must be `pdf_view`, `hostname` must be the site host). Cloudflare's test keys stay exempt
-- **Fix**: REST responses (`content.rendered`) no longer contain facade markup — only the iframe without `src`, as documented. When such content is inserted into a page, the JS fallback adds the facade, sealed refs included
-- **Fix**: deferred assets are matched by URL without the query string instead of by file name, so files with similar names (`pdf.min.js` / `jspdf.min.js`) are not skipped
-- **Fix**: a facade opens its own iframe when `pll-N` IDs repeat on one page (content rendered twice, posts loaded via AJAX)
-- **Build**: `pdf-lazy-loader.min.js` is rebuilt with terser by GitHub Actions (`build-assets.yml`) whenever the source file changes
+- `/verify` rejects a `siteverify` answer without `action` or `hostname`
+- REST responses no longer contain facade markup; content inserted into a page from REST gets the facade from JavaScript
+- Deferred assets are matched by URL instead of file name
+- A facade opens its own iframe when `pll-N` IDs repeat on a page
+- `pdf-lazy-loader.min.js` is built by GitHub Actions
 
 ### v1.3.3
-- **Security**: `?pdfemb-data=` can no longer switch the facade and sealed refs off on a normal page or in REST output. In 1.3.2 any hand-made value that decoded to JSON with a `url` still did. The viewer request is now detected the same way PDF Embedder Premium detects it — front page + non-empty parameter, and only when Premium is loaded; on that request Premium prints the viewer and stops before any post content is rendered
-- **Note**: `pdf-lazy-loader.min.js` is still the non-terser build from 1.3.2 (only the version fallback changed). Rebuild it with the command from *Development & Release* before tagging
+- `?pdfemb-data=` can no longer switch the facade off on a normal page or in REST output: the viewer request is detected the way PDF Embedder Premium detects it (front page + non-empty parameter)
 
 ### v1.3.2
-- **Security**: an arbitrary `?pdfemb-data=` value no longer switches the facade (and sealed refs) off on a normal page — the request is treated as the PDF Embedder viewer only when the value decodes to viewer JSON with a `url`
-- **Security**: sealed refs are bound to the post they were rendered in; `/verify` releases only the refs of one post per Turnstile token (the browser sends the clicked PDF first). Refs sealed before 1.3.2 keep working as one legacy group
-- **Fix**: Turnstile failures no longer leave a dead facade. Blocked `api.js`, widget error / expiry, render error and server rejection all restore the buttons, show a message and give a fresh widget on the next click (the Download button too)
-- **Fix**: per-IP rate limit behind Cloudflare — `CF-Connecting-IP` is used when the connection comes from a Cloudflare range (bundled list, filter `pdf_lazy_loader_cloudflare_ranges`); the header is ignored from any other peer
-- **Fix**: non-ASCII PDF URLs — XOR obfuscation runs over UTF-8 bytes in JS (main script and the early `<head>` interceptor), byte-compatible with PHP; the JS fallback never strips an iframe `src` without a restorable copy
-- **Note**: `pdf-lazy-loader.min.js` in this version was built without terser (comment lines and indentation stripped, ~22 KB instead of ~17 KB). Rebuild it with the command from *Development & Release* before tagging
+- Sealed references are bound to their post; one Turnstile token opens the PDFs of one post
+- Turnstile failures restore the buttons, show a message and allow a retry
+- Non-ASCII PDF addresses work in the obfuscated mode
 
 ### v1.3.1
-- Turnstile widget is removed via `turnstile.remove()` after success (fixes console warning "Cannot find Widget …, consider using turnstile.remove()")
-- Minimum spinner time counts from the moment the spinner appeared, so server verification time is no longer added on top of it
-- `Server-Timing`: new `wp_boot` metric (WordPress bootstrap before the handler)
+- Turnstile widget is removed through its API after success
+- Minimum spinner time counts from the moment the spinner appears
 
 ### v1.3.0
-- **Server-side Turnstile verification** (optional, Settings → Cloudflare Turnstile → *Server-side verification*): REST endpoint `POST /wp-json/pdf-lazy-loader/v1/verify` validates the token with Cloudflare `siteverify` (single-use, action `pdf_view`, hostname check) and only then returns the PDF URLs
-- In server mode the HTML contains an AES-256-GCM sealed reference (`data-pll-ref`) instead of the XOR-obfuscated URL; download URL is released the same way; REST `wp/v2` output is sealed too
-- Stateless: no DB writes, full-page cache compatible; forged refs rejected before any outbound call; one token unlocks all PDFs on the page; optional rate limit with persistent object cache
-- `Server-Timing` header on the endpoint for latency diagnostics
-- Viewer assets download in parallel with the Turnstile challenge
-- Secret Key is no longer printed back into the settings form (empty field keeps the stored key)
+- Server-side Turnstile verification: REST endpoint, AES-256-GCM sealed references, optional rate limit
 
 ### v1.2.1
-Fixes for Google PageSpeed / Lighthouse findings:
-- **Accessibility — color contrast**: button and PDF icon colors are darkened (hue preserved) until white text reaches WCAG AA 4.5:1 (default `#FF6B6B` → `#C25151`, hover `#E63946` → `#A54545`); subtitle / info / loading / Turnstile texts darkened to ≥ 4.5:1 on the facade background. Admin preview shows the effective colors
-- **Accessibility — heading order**: facade title is not a heading (`<h3>` removed in 1.2.0, admin preview aligned)
-- **Performance — render-blocking request**: `pdf-lazy-loader.css` is inlined (minified) instead of a separate `<link>`
-- **Performance — network dependency tree**: minified `pdf-lazy-loader.min.js` (24 KB → 13 KB, ~4 KB gzip), still `defer` in footer
-- **Performance — LCP render delay**: facade is server-rendered (since 1.2.0), so the LCP text is painted with the first frame
-- New filters: `pdf_lazy_loader_enforce_contrast`, `pdf_lazy_loader_inline_css`
+- Contrast-safe button colors, facade CSS inlined, minified frontend script
 
 ### v1.2.0
-- **Compatibility**: `Tested up to: 7.1`, `Requires PHP: 7.4`, `Requires at least: 5.7`; inline scripts via `wp_get_inline_script_tag()`
-- **Fix**: localized data and inline scripts of deferred PDF Embedder handles (`pdfemb_trans` etc.) are preserved
-- **Fix**: deferred asset URLs now include `?ver=` and use `base_url` for relative paths
-- **Fix**: plugin no longer touches the PDF Embedder viewer request (`/?pdfemb-data=`) — previously viewer scripts could be stripped inside the iframe when the front page contained a PDF
-- **Fix**: PDF detection scans all posts of the main query (archives / blog index), tri-state memoized
-- **Fix**: REST filtering for every public post type, not only `post`
-- **Perf**: server-side facade in `the_content` (no CLS, works before JS)
-- **Perf**: spinner delay runs in parallel with asset loading, default 1500 → 300 ms (one-time migration)
-- **Perf**: preload of viewer assets and Turnstile script on hover / focus / touch
-- **Perf**: frontend JS loaded with `defer`; facade styles moved from inline JS to CSS with custom properties and `@media` (no resize listeners)
-- **Perf**: debounced `MutationObserver` that only scans added nodes; single-pass `ob_start` callback with fast exit; Layer 3 no longer duplicated by the buffer
-- **Perf**: only queued PDF Embedder handles are deferred — unused registered files are never downloaded
-- **i18n**: all facade/admin strings translatable (`pdf-lazy-loader`)
-- **Cleanup**: `substr()` → `slice()`, `wp_unslash()` for `$_POST`, enqueue hook moved to its own priority (1000), Turnstile widget re-render on retry
-- **Safety**: free PDF Embedder without Premium — deferred assets load immediately instead of leaving the viewer broken
+- Server-rendered facade, preload on intent, WordPress 7.x compatibility, PDF detection on archive pages
 
-### v1.1.1
-- **Refactor**: Replaced `wp_localize_script()` with `wp_add_inline_script(..., 'before')` on both frontend (`pdfLazyLoaderData`) and admin (`pdfLazyLoaderAdmin`) scripts — forward-compatible with WP 7.x
-- **Updated**: `Tested up to: 6.7` → `6.8`
-- **Updated**: README — added "WP 7.x Ready" feature note, new "Data Passing to JavaScript" technical section
-
-### v1.1.0
-- **Fix**: `pdfemb-fullscreen.min.css` (and all other PDFEmbedder-premium assets registered inside shortcode `render()`) now guaranteed to load on click
-- **New**: Layer 2 — `wp_footer:1` full scan of `$wp_styles->registered` / `$wp_scripts->registered` by plugin path after all shortcodes execute
-- **New**: Layer 3 — `wp_footer:2` injects `window.pdfLazyLoaderLateAssets` before `</body>` with the complete final asset list
-- **New**: `pdf_lazy_loader_is_pdfemb_src()` centralized path-based detector used across all layers
-- **Fix**: JS CSS dedup no longer uses `CSS.escape()` — fixes `querySelector` failing for filenames with dots (e.g. `pdfemb-fullscreen.min.css`)
-- **Improved**: `ob_start` regex broadened to path-segment match; updates `window.pdfLazyLoaderLateAssets` before `</body>` if new URLs found
-- **Improved**: `pdfemb-fullscreen`, `pdfemb-all-premium`, `pdfemb-print` added to dequeue handle list
-
-### v1.0.9
-- Added `ob_start` HTML output buffer on `template_redirect` to strip PDF Embedder `<link>`/`<script>` tags enqueued late inside shortcode `render()` callbacks
-- Added `pdf-fullscreen` handle to the dequeue list
-- Fixed `pdfemb-fullscreen.min.css` partial capture
-
-### v1.0.8
-- Added on-demand PDF Embedder asset loading (`loadPDFEmbedderAssets()`)
-- `wp_dequeue_style` / `wp_dequeue_script` for all known PDF Embedder handles at priority 999
-- Deferred asset URLs passed to JS via `wp_localize_script`
-- Assets injected into DOM only after user clicks "View PDF"
-
-### v1.0.6
-- Added URL encryption (XOR + Base64)
-- Server-side content filtering
-- Cloudflare Turnstile integration
-- Responsive facade heights
-- Debug mode
-- Improved iframe interception
-
-### v1.0.4
-- Fixed download button toggle
-- Fixed PDF background loading
-- Removed unnecessary settings
-- All text in English
-
-## Development & Release
-
-CI (`.github/workflows/ci.yml`) runs on every push / PR to `main`: `php -l` on PHP 7.4–8.4, `node --check` for JS, version consistency (plugin header = `PDF_LAZY_LOADER_VERSION` = JS fallback), changelog entry `### vX.Y.Z` in README, and the presence of `pdf-lazy-loader.min.js`.
-
-`pdf-lazy-loader.min.js` is built by `.github/workflows/build-assets.yml`: every push to `main` that changes `assets/js/pdf-lazy-loader.js` runs terser and commits the result as `github-actions[bot]`. Do not edit the minified file by hand. The same build can be run locally:
-
-```bash
-npx terser@5 assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js
-```
-
-Release (`.github/workflows/release.yml`) is triggered by a `vX.Y.Z` tag. It verifies that the tag matches the plugin version, builds `pdf-lazy-loader-X.Y.Z.zip` (folder `pdf-lazy-loader/`, without `.git`/`.github`) plus `.sha256`, and publishes a GitHub Release with the notes from the matching `### vX.Y.Z` README section.
-
-```bash
-# 1. bump Version: header, PDF_LAZY_LOADER_VERSION, JS fallback; add "### vX.Y.Z" to README
-# 2. commit & push to main, wait for green CI and for the "build: rebuild pdf-lazy-loader.min.js" commit
-git pull
-git tag -a v1.2.1 -m "PDF Lazy Loader 1.2.1"
-git push origin v1.2.1
-```
+Earlier versions: see the commit history.
 
 ## License
 
-GPL v2 or later
-
-## Support
-
-For issues and questions, enable Debug Mode in plugin settings and check the browser console (F12).
+GPL v2 or later.
