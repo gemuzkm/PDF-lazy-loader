@@ -24,7 +24,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.2',
+            version:          raw.version || '1.3.3',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),

@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.3.2
+# PDF Lazy Loader v1.3.3
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -120,7 +120,7 @@ Notes:
 - The URL "encryption" is **obfuscation** (XOR + Base64 with a key that is public in the page source). It defeats naive HTML parsers, not a determined scraper
 - In client-side mode Turnstile is verified in the browser only — it filters casual bots, but is not a server-side access control. Enable **Server-side verification** for a real check (the URL is then not present in the HTML at all)
 - What really protects against bots here: no PDF URL in plain text, no viewer iframe and no viewer/PDF requests until a real interaction happens
-- The plugin steps aside only for a real PDF Embedder viewer request: `?pdfemb-data=` must decode to the viewer JSON with a `url`. An arbitrary value (`?pdfemb-data=x`) no longer switches the facade off. A valid value copied from an opened viewer still passes this check — whether PDF Embedder can render a normal page for such a URL has not been verified
+- The plugin steps aside only for the PDF Embedder Premium viewer request, detected the same way Premium detects it: the front page with a non-empty `?pdfemb-data=`, with Premium loaded. Premium then prints the viewer and stops, so no post content is rendered for that request. On any other URL and in REST responses the parameter is ignored and cannot switch the facade off. The condition was taken from Premium's `Viewer::is_viewer()`; if a Premium build detects the viewer differently, this check has to be updated
 
 ## Technical Details
 
@@ -199,6 +199,10 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.3.3
+- **Security**: `?pdfemb-data=` can no longer switch the facade and sealed refs off on a normal page or in REST output. In 1.3.2 any hand-made value that decoded to JSON with a `url` still did. The viewer request is now detected the same way PDF Embedder Premium detects it — front page + non-empty parameter, and only when Premium is loaded; on that request Premium prints the viewer and stops before any post content is rendered
+- **Note**: `pdf-lazy-loader.min.js` is still the non-terser build from 1.3.2 (only the version fallback changed). Rebuild it with the command from *Development & Release* before tagging
 
 ### v1.3.2
 - **Security**: an arbitrary `?pdfemb-data=` value no longer switches the facade (and sealed refs) off on a normal page — the request is treated as the PDF Embedder viewer only when the value decodes to viewer JSON with a `url`
