@@ -1,0 +1,49 @@
+name: Apply asset retry fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-asset-retry.yml'
+      - '.github/scripts/apply-asset-retry.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-asset-retry
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+          coverage: none
+      - name: Apply guarded changes
+        run: python3 .github/scripts/apply-asset-retry.py
+      - name: Validate and minify
+        run: |
+          set -e
+          php -l pdf-lazy-loader.php
+          node --check assets/js/pdf-lazy-loader.js
+          npx --yes terser@5 assets/js/pdf-lazy-loader.js -c -m --comments false -o assets/js/pdf-lazy-loader.min.js
+          node --check assets/js/pdf-lazy-loader.min.js
+          test -s assets/js/pdf-lazy-loader.min.js
+      - name: Commit fix
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pdf-lazy-loader.php assets/js/pdf-lazy-loader.js assets/js/pdf-lazy-loader.min.js README.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: v1.3.7 — retry failed viewer assets without losing the facade'
+            git push origin HEAD:main
+          fi
