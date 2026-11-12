@@ -1,4 +1,4 @@
-# PDF Lazy Loader v1.3.1
+# PDF Lazy Loader v1.3.2
 
 WordPress plugin that defers **PDF Embedder / PDF Embedder Premium** output behind a lightweight click-to-load facade. Nothing PDF-related — viewer iframe, PDF file, viewer CSS/JS — is requested until the visitor clicks **View PDF** (and, optionally, passes Cloudflare Turnstile). This keeps pages light and hides PDFs from naive bots.
 
@@ -82,9 +82,9 @@ Requires: Turnstile enabled + Site Key + Secret Key + PHP OpenSSL (`aes-256-gcm`
 | Bot reads the HTML | Can decode the URL | Gets nothing usable |
 | Bot calls JS from the console | Gets the PDF | Needs a valid Turnstile token |
 | Turnstile token | Checked in the browser only | Checked by Cloudflare `siteverify` (single-use, action `pdf_view`, hostname = this site) |
-| Extra server work | none | 1 REST request per page view, on the first click |
+| Extra server work | none | 1 REST request per post with PDFs, on the first click |
 
-Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `{token, refs[]}` → refs are decrypted locally (forged / stale refs are rejected **before** any outbound call) → one `siteverify` call → URLs for **all** PDFs on the page are returned (one token per page view; other PDFs open without a second challenge). Viewer CSS/JS download in parallel with the challenge.
+Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `{token, refs[]}` → refs are decrypted locally (forged / stale refs are rejected **before** any outbound call) → one `siteverify` call → URLs for the PDFs **of one post** are returned. Each sealed ref carries the ID of the post it was rendered in; the browser sends the clicked PDF first and the endpoint releases only the refs with the same post ID, so refs collected from other pages cannot be unlocked with the same token. Other PDFs of that post open without a second challenge; on archive pages every post needs its own challenge. Viewer CSS/JS download in parallel with the challenge.
 
 **Latency** (measured on a local test site, Cloudflare `siteverify` from the server ≈ 60–70 ms):
 
@@ -101,12 +101,14 @@ Flow: click → Turnstile widget → `POST /wp-json/pdf-lazy-loader/v1/verify` `
 | Page render | one `openssl_encrypt` per PDF iframe (~3 µs). No DB queries. Compatible with full-page cache |
 | `verify` request | one uncached WordPress REST bootstrap (~6 MB RAM, ~20 ms CPU, only the standard autoload option reads) + one outbound HTTPS request. **No DB writes**, no sessions, no transients |
 | Forged / garbage requests | rejected locally in < 1 ms of plugin code, no `siteverify` call |
-| Rate limit | 20 req/min/IP (filter `pdf_lazy_loader_verify_rate_limit`) — only when a persistent object cache (Redis/Memcached) is present; without it no limit is applied, to avoid DB writes |
+| Rate limit | 20 req/min/IP (filter `pdf_lazy_loader_verify_rate_limit`) — only when a persistent object cache (Redis/Memcached) is present; without it no limit is applied, to avoid DB writes. Behind Cloudflare the visitor IP is taken from `CF-Connecting-IP`, but only when the connection really comes from a Cloudflare address (see Notes) |
 
 Notes:
 - If Cloudflare WAF filters REST on your site, allow `POST /wp-json/pdf-lazy-loader/v1/verify`. The endpoint answers with `Cache-Control: no-store` and a `Server-Timing` header (`wp_boot` — WordPress + plugins bootstrap before the handler, `decrypt`, `siteverify`, `total` — plugin handler) visible in DevTools. If the browser-side time is much larger than `wp_boot + total`, the rest is network / proxy (e.g. Cloudflare) time.
 - Turnstile needs `https://challenges.cloudflare.com` in CSP `script-src` and `frame-src` (if your site sends a Content-Security-Policy).
 - Rotating WordPress salts invalidates refs in already cached pages — visitors see "This page is outdated. Please reload it." until the cache is purged.
+- Refs in pages cached before 1.3.2 have no post ID; they are treated as one legacy group and keep working until the cache is refreshed.
+- Client IP for the rate limit: `REMOTE_ADDR`, replaced by `CF-Connecting-IP` only when `REMOTE_ADDR` is inside Cloudflare's published ranges (the list is bundled with the plugin and can become outdated — update it with the `pdf_lazy_loader_cloudflare_ranges` filter). From any other peer the header is ignored, because it can be forged. Without this, all visitors behind Cloudflare would share a few edge addresses and hit the limit together.
 - The PDF file itself stays a public static file: anyone who already knows its URL can download it. Server-side mode prevents extracting the URL from the page, it is not an access control on `wp-content/uploads`.
 
 ### Debug Settings
@@ -118,6 +120,7 @@ Notes:
 - The URL "encryption" is **obfuscation** (XOR + Base64 with a key that is public in the page source). It defeats naive HTML parsers, not a determined scraper
 - In client-side mode Turnstile is verified in the browser only — it filters casual bots, but is not a server-side access control. Enable **Server-side verification** for a real check (the URL is then not present in the HTML at all)
 - What really protects against bots here: no PDF URL in plain text, no viewer iframe and no viewer/PDF requests until a real interaction happens
+- The plugin steps aside only for a real PDF Embedder viewer request: `?pdfemb-data=` must decode to the viewer JSON with a `url`. An arbitrary value (`?pdfemb-data=x`) no longer switches the facade off. A valid value copied from an opened viewer still passes this check — whether PDF Embedder can render a normal page for such a URL has not been verified
 
 ## Technical Details
 
@@ -148,6 +151,8 @@ Path detector used everywhere:
 - `MutationObserver` is debounced (50 ms) and scans only added nodes
 - Iframes that did not pass through `the_content` (page builders, dynamic markup) are handled by the early `<head>` interceptor + JS fallback facade
 - Free PDF Embedder (`<a class="pdfemb-viewer">`, no iframe): no facade is possible, so its deferred assets are loaded immediately — the viewer is never left broken
+- Any verification failure (Turnstile `api.js` blocked, widget error / expiry, render error, server rejection) goes through one path: the facade gets its buttons back with a message, and the next click renders a fresh widget
+- URL obfuscation runs over UTF-8 bytes in both PHP and JS, so non-ASCII PDF URLs (e.g. Cyrillic file names) survive the round trip
 
 ### Filters
 
@@ -160,7 +165,8 @@ Path detector used everywhere:
 | `pdf_lazy_loader_verify_rate_limit` | Requests per minute per IP for `/verify` (default `20`, `0` = off; needs persistent object cache) |
 | `pdf_lazy_loader_verify_hostname` | `false` — do not compare `siteverify` hostname with the site host |
 | `pdf_lazy_loader_verify_send_ip` | `true` — send `remoteip` to `siteverify` |
-| `pdf_lazy_loader_client_ip` | Client IP used for rate limit / `remoteip` (default `REMOTE_ADDR`; e.g. return `CF-Connecting-IP` if the origin accepts traffic only from Cloudflare) |
+| `pdf_lazy_loader_client_ip` | Final client IP used for rate limit / `remoteip` (default: `REMOTE_ADDR`, or `CF-Connecting-IP` when the request comes from a Cloudflare range) |
+| `pdf_lazy_loader_cloudflare_ranges` | List of CIDR ranges from which `CF-Connecting-IP` is trusted (default: Cloudflare's published IPv4/IPv6 ranges; return an empty array to never trust the header) |
 
 ### Content filters
 
@@ -193,6 +199,14 @@ pdf-lazy-loader/
 - PDF Embedder Premium (Legacy) 5.3.x with PDF Embedder (free) active
 
 ## Version History
+
+### v1.3.2
+- **Security**: an arbitrary `?pdfemb-data=` value no longer switches the facade (and sealed refs) off on a normal page — the request is treated as the PDF Embedder viewer only when the value decodes to viewer JSON with a `url`
+- **Security**: sealed refs are bound to the post they were rendered in; `/verify` releases only the refs of one post per Turnstile token (the browser sends the clicked PDF first). Refs sealed before 1.3.2 keep working as one legacy group
+- **Fix**: Turnstile failures no longer leave a dead facade. Blocked `api.js`, widget error / expiry, render error and server rejection all restore the buttons, show a message and give a fresh widget on the next click (the Download button too)
+- **Fix**: per-IP rate limit behind Cloudflare — `CF-Connecting-IP` is used when the connection comes from a Cloudflare range (bundled list, filter `pdf_lazy_loader_cloudflare_ranges`); the header is ignored from any other peer
+- **Fix**: non-ASCII PDF URLs — XOR obfuscation runs over UTF-8 bytes in JS (main script and the early `<head>` interceptor), byte-compatible with PHP; the JS fallback never strips an iframe `src` without a restorable copy
+- **Note**: `pdf-lazy-loader.min.js` in this version was built without terser (comment lines and indentation stripped, ~22 KB instead of ~17 KB). Rebuild it with the command from *Development & Release* before tagging
 
 ### v1.3.1
 - Turnstile widget is removed via `turnstile.remove()` after success (fixes console warning "Cannot find Widget …, consider using turnstile.remove()")
