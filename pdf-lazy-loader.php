@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.1
+ * Version: 1.3.2
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.1' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.2' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -465,7 +465,7 @@ function pdf_lazy_loader_encrypt_url( $url ) {
 //   1) validates input and decrypts refs locally (garbage is rejected before
 //      any outbound call),
 //   2) calls Cloudflare siteverify once (timeout 5 s),
-//   3) returns the URLs for ALL refs on the page (one token per page view).
+//   3) returns the URLs for the refs of ONE post (the post of the first ref).
 // No DB writes. Optional per-IP rate limit only with a persistent object cache.
 // ---------------------------------------------------------------------------
 function pdf_lazy_loader_server_verify_active( $settings = null ) {
@@ -500,7 +500,9 @@ function pdf_lazy_loader_b64url_decode( $str ) {
 
 /** Seal iframe src + download URL. Returns '' on failure (caller falls back to XOR mode). */
 function pdf_lazy_loader_seal_ref( $src, $pdf_url = '' ) {
-    $plain = wp_json_encode( array( 's' => (string) $src, 'p' => (string) $pdf_url ) );
+    // 'i' binds the ref to the post it was rendered in: one Turnstile token
+    // releases the PDFs of one post only (see pdf_lazy_loader_rest_verify).
+    $plain = wp_json_encode( array( 's' => (string) $src, 'p' => (string) $pdf_url, 'i' => (int) get_the_ID() ) );
     $iv    = random_bytes( 12 );
     $tag   = '';
     $ct    = openssl_encrypt( $plain, 'aes-256-gcm', pdf_lazy_loader_ref_key(), OPENSSL_RAW_DATA, $iv, $tag, 'pll1' );
@@ -517,7 +519,11 @@ function pdf_lazy_loader_open_ref( $ref ) {
     if ( $plain === false ) return null;
     $data = json_decode( $plain, true );
     if ( ! is_array( $data ) || empty( $data['s'] ) || ! pdf_lazy_loader_is_pdf_url( $data['s'] ) ) return null;
-    return array( 's' => (string) $data['s'], 'p' => isset( $data['p'] ) ? (string) $data['p'] : '' );
+    return array(
+        's' => (string) $data['s'],
+        'p' => isset( $data['p'] ) ? (string) $data['p'] : '',
+        'i' => isset( $data['i'] ) ? (int) $data['i'] : 0, // 0 = ref sealed before 1.3.2 (cached page)
+    );
 }
 
 function pdf_lazy_loader_register_verify_route() {
@@ -532,10 +538,47 @@ function pdf_lazy_loader_register_verify_route() {
     ) );
 }
 
+// Cloudflare edge ranges (https://www.cloudflare.com/ips/). Used only to decide
+// whether the CF-Connecting-IP header can be trusted.
+function pdf_lazy_loader_cloudflare_ranges() {
+    return (array) apply_filters( 'pdf_lazy_loader_cloudflare_ranges', array(
+        '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18',
+        '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17',
+        '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+        '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32',
+        '2a06:98c0::/29', '2c0f:f248::/32',
+    ) );
+}
+
+function pdf_lazy_loader_ip_in_cidr( $ip, $cidr ) {
+    $parts = explode( '/', (string) $cidr, 2 );
+    if ( count( $parts ) !== 2 || ! filter_var( $ip, FILTER_VALIDATE_IP ) || ! filter_var( $parts[0], FILTER_VALIDATE_IP ) ) return false;
+    $a    = inet_pton( $ip );
+    $b    = inet_pton( $parts[0] );
+    $bits = (int) $parts[1];
+    if ( $a === false || $b === false || strlen( $a ) !== strlen( $b ) || $bits < 0 || $bits > strlen( $a ) * 8 ) return false;
+    $bytes = intdiv( $bits, 8 );
+    $rem   = $bits % 8;
+    if ( $bytes > 0 && substr( $a, 0, $bytes ) !== substr( $b, 0, $bytes ) ) return false;
+    if ( $rem === 0 ) return true;
+    $mask = ( 0xFF << ( 8 - $rem ) ) & 0xFF;
+    return ( ord( $a[ $bytes ] ) & $mask ) === ( ord( $b[ $bytes ] ) & $mask );
+}
+
 function pdf_lazy_loader_client_ip() {
-    // REMOTE_ADDR only — headers like CF-Connecting-IP are spoofable unless the
-    // origin is locked to Cloudflare. Use the filter to trust them explicitly.
     $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+    // Behind Cloudflare REMOTE_ADDR is an edge address shared by many visitors,
+    // which would make the per-IP rate limit hit real people. CF-Connecting-IP is
+    // trusted ONLY when the connection really comes from a Cloudflare range —
+    // from any other peer the header is spoofable and is ignored.
+    if ( $ip !== '' && ! empty( $_SERVER['HTTP_CF_CONNECTING_IP'] ) ) {
+        $cf = sanitize_text_field( wp_unslash( $_SERVER['HTTP_CF_CONNECTING_IP'] ) );
+        if ( filter_var( $cf, FILTER_VALIDATE_IP ) ) {
+            foreach ( pdf_lazy_loader_cloudflare_ranges() as $cidr ) {
+                if ( pdf_lazy_loader_ip_in_cidr( $ip, $cidr ) ) { $ip = $cf; break; }
+            }
+        }
+    }
     return (string) apply_filters( 'pdf_lazy_loader_client_ip', $ip );
 }
 
@@ -581,10 +624,16 @@ function pdf_lazy_loader_rest_verify( WP_REST_Request $request ) {
         return pdf_lazy_loader_rest_error( 'bad_token', $t['verifyFailed'], 400 );
     }
     $refs = array_slice( array_values( array_unique( array_filter( $refs, 'is_string' ) ) ), 0, 50 );
+    // Only refs of ONE post are released per token: the post of the first valid
+    // ref (the browser sends the clicked PDF first). Refs collected from other
+    // pages are ignored, so one solved challenge cannot unlock a whole site.
     $open = array();
+    $page = null;
     foreach ( $refs as $ref ) {
         $d = pdf_lazy_loader_open_ref( $ref );
-        if ( $d ) $open[ $ref ] = $d;
+        if ( ! $d ) continue;
+        if ( $page === null ) $page = $d['i'];
+        if ( $d['i'] === $page ) $open[ $ref ] = $d;
     }
     $timing['decrypt'] = ( microtime( true ) - $t0 ) * 1000;
     if ( ! $open ) {
@@ -812,8 +861,20 @@ function pdf_lazy_loader_content_has_pdf( $c ) {
 // PDF Embedder Premium renders its viewer as the front page with
 // ?pdfemb-data=... (inside the iframe). The plugin must never touch that
 // request, otherwise the viewer's own pdf-viewer.min.js / CSS are stripped.
+// Only a value that decodes to the viewer JSON (with a 'url') counts: an
+// arbitrary ?pdfemb-data=x must not switch the facade off on a normal page.
 function pdf_lazy_loader_is_pdfemb_viewer_request() {
-    return isset( $_GET['pdfemb-data'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+    static $is = null;
+    if ( $is !== null ) return $is;
+    $is = false;
+    // phpcs:disable WordPress.Security.NonceVerification.Recommended
+    if ( isset( $_GET['pdfemb-data'] ) && is_string( $_GET['pdfemb-data'] ) ) {
+        $raw  = sanitize_text_field( wp_unslash( $_GET['pdfemb-data'] ) );
+        $json = json_decode( (string) pdf_lazy_loader_b64url_decode( $raw ), true );
+        $is   = is_array( $json ) && ! empty( $json['url'] ) && is_string( $json['url'] );
+    }
+    // phpcs:enable
+    return $is;
 }
 
 function pdf_lazy_loader_has_pdf_iframes() {
@@ -846,7 +907,7 @@ function pdf_lazy_loader_has_pdf_iframes() {
 function pdf_lazy_loader_add_inline_script() {
     if ( is_admin() || ! pdf_lazy_loader_has_pdf_iframes() ) return;
     $js = "(function(){'use strict';var K='pdf-lazy-loader-secure-key-2024',I=['.pdf','application/pdf','pdf-embedder','pdfembed','pdfemb-data','pdfjs','viewer.html'];"
-        . "function x(s){var o='';for(var i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^K.charCodeAt(i%K.length));try{return btoa(o);}catch(e){return '';}}"
+        . "function x(s){var o='';try{s=unescape(encodeURIComponent(s));}catch(e){return '';}for(var i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^K.charCodeAt(i%K.length));try{return btoa(o);}catch(e){return '';}}"
         . "function c(f){var s=f.getAttribute('src')||'';if(!s||f.hasAttribute('data-pdf-lazy-original-src-enc'))return;var l=s.toLowerCase();for(var j=0;j<I.length;j++){if(l.indexOf(I[j])!==-1){var e=x(s);if(!e)return;f.setAttribute('data-pdf-lazy-original-src-enc',e);f.removeAttribute('src');f.setAttribute('data-pdf-lazy-intercepted','1');return;}}}"
         . "function a(){var e=document.getElementsByTagName('iframe');for(var i=0;i<e.length;i++)c(e[i]);}"
         . "a();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',a,{once:true});"
