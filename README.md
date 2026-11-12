@@ -101,6 +101,11 @@ git push origin v1.3.5
 
 ## Changelog
 
+### v1.3.7
+- Viewer asset failures keep the facade visible and allow another attempt with View PDF
+- Failed plugin-created tags are removed; successful scripts are not executed again on retry
+- Concurrent facades share in-flight requests; scripts retain dependency order; asset timeout is 30 seconds
+
 ### v1.3.6
 - Optional Download via Blob setting (off by default), with busy state, error handling and retry; no direct-link fallback
 - PDF viewing and server-side Turnstile validation are unchanged

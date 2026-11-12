@@ -17,6 +17,7 @@
         verifyReload: 'This page is outdated. Please reload it.',
         downloading: 'Preparing download...',
         downloadFailed: 'Download failed. Please try again. External files must allow CORS.',
+        assetsFailed: 'Viewer files could not be loaded. Click View PDF to try again.',
         retry: 'Try again'
     };
 
@@ -26,7 +27,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.6',
+            version:          raw.version || '1.3.7',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             blobDownload:     toBool(raw.blobDownload),
@@ -189,59 +190,89 @@
             catch (e) { return String(url).split('?')[0].split('#')[0]; }
         }
 
-        loadCSS(a) {
-            const key = PDFLazyLoader.urlKey(a.href);
-            const exists = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).some(l => l.href && PDFLazyLoader.urlKey(l.href) === key);
-            if (exists) return Promise.resolve();
-            return new Promise(resolve => {
-                const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.media = a.media || 'all';
-                link.href = a.href;
-                const done = () => { clearTimeout(t); resolve(); };
-                const t = setTimeout(done, 3000); // never block the viewer on a slow stylesheet
-                link.onload = link.onerror = done;
-                document.head.appendChild(link);
-                if (a.inline) {
-                    const st = document.createElement('style');
-                    st.textContent = a.inline;
-                    document.head.appendChild(st);
-                }
-                this.debug('Injected CSS:', a.href);
-            });
-        }
+        loadCSS(a) { return this.loadAsset(a, 'style'); }
 
-        loadJS(a) {
-            const key = PDFLazyLoader.urlKey(a.src);
-            const exists = Array.from(document.querySelectorAll('script[src]')).some(s => s.src && PDFLazyLoader.urlKey(s.src) === key);
-            if (exists) return Promise.resolve();
-            return new Promise(resolve => {
-                const s = document.createElement('script');
-                s.src = a.src;
-                s.async = false;
-                s.onload = () => {
-                    if (a.after) { const i = document.createElement('script'); i.textContent = a.after; document.head.appendChild(i); }
-                    this.debug('JS loaded:', a.src);
+        loadJS(a) { return this.loadAsset(a, 'script'); }
+
+        // Only our own failed tags are removed. Successful and in-flight loads
+        // are shared between all facades, preserving script dependency order.
+        loadAsset(a, type) {
+            if (!this._assetPromises) this._assetPromises = new Map();
+            const url = type === 'style' ? a.href : a.src;
+            const key = type + ':' + PDFLazyLoader.urlKey(url);
+            if (this._assetPromises.has(key)) return this._assetPromises.get(key);
+            const selector = type === 'style' ? 'link[rel="stylesheet"]' : 'script[src]';
+            if (Array.from(document.querySelectorAll(selector)).some(n =>
+                PDFLazyLoader.urlKey(type === 'style' ? n.href : n.src) === PDFLazyLoader.urlKey(url))) {
+                return Promise.resolve();
+            }
+
+            const pending = new Promise((resolve, reject) => {
+                const node = document.createElement(type === 'style' ? 'link' : 'script');
+                let settled = false;
+                let timer;
+                const finish = error => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    node.onload = node.onerror = null;
+                    if (error) {
+                        node.remove();
+                        reject(error);
+                        return;
+                    }
+                    if (type === 'style' && a.inline) {
+                        const inline = document.createElement('style');
+                        inline.textContent = a.inline;
+                        document.head.appendChild(inline);
+                    }
+                    if (type === 'script' && a.after) {
+                        const inline = document.createElement('script');
+                        inline.textContent = a.after;
+                        document.head.appendChild(inline);
+                    }
                     resolve();
                 };
-                s.onerror = () => { this.debug('JS failed:', a.src); resolve(); };
-                document.head.appendChild(s);
+                node.onload = () => finish();
+                node.onerror = () => finish(new Error('Asset failed: ' + url));
+                timer = setTimeout(() => finish(new Error('Asset timeout: ' + url)), 30000);
+                if (type === 'style') {
+                    node.rel = 'stylesheet';
+                    node.media = a.media || 'all';
+                    node.href = url;
+                } else {
+                    node.async = false;
+                    node.src = url;
+                }
+                document.head.appendChild(node);
             });
+            const tracked = pending.catch(error => {
+                this._assetPromises.delete(key);
+                this.debug('Asset load failed:', url, error);
+                throw error;
+            });
+            this._assetPromises.set(key, tracked);
+            return tracked;
         }
 
         loadPDFEmbedderAssets() {
-            if (this._assetsLoaded)  return Promise.resolve();
+            if (this._assetsLoaded) return Promise.resolve();
             if (this._assetsLoading) return this._assetsLoading;
-
             const { css, js } = this.collectAssets();
-            this.debug('Assets — CSS:', css, 'JS:', js);
-
+            // Wait for both branches to settle before allowing another batch.
+            // Otherwise a retry could overlap the previous JS dependency chain.
+            const settle = promise => promise.then(() => null, error => error);
             this._assetsLoading = Promise.all([
-                Promise.all(css.map(a => this.loadCSS(a))),
-                // JS strictly sequential (dependency order from PHP)
-                js.reduce((p, a) => p.then(() => this.loadJS(a)), Promise.resolve())
-            ]).then(() => {
-                this._assetsLoaded  = true;
+                Promise.all(css.map(a => settle(this.loadCSS(a)))),
+                settle(js.reduce((p, a) => p.then(() => this.loadJS(a)), Promise.resolve()))
+            ]).then(([cssErrors, jsError]) => {
+                const error = cssErrors.find(Boolean) || jsError;
+                if (error) throw error;
+                this._assetsLoaded = true;
+            }).catch(error => {
+                this._assetsLoaded = false;
+                throw error;
+            }).finally(() => {
                 this._assetsLoading = null;
             });
             return this._assetsLoading;
@@ -519,6 +550,8 @@
             if (!src) return;
 
             wrapper.classList.add('is-busy');
+            const old = wrapper.querySelector('.pdf-facade-error');
+            if (old) old.remove();
             this.showSpinner(wrapper);
 
             // Asset download and the minimum spinner time run in parallel; the
@@ -526,7 +559,7 @@
             // time is already part of it).
             const shown = wrapper._pllSpinStart ? performance.now() - wrapper._pllSpinStart : 0;
             const minDelay = new Promise(r => setTimeout(r, Math.max(0, this.options.loadingTime - shown)));
-            Promise.all([this.loadPDFEmbedderAssets().catch(() => {}), minDelay]).then(() => {
+            Promise.all([this.loadPDFEmbedderAssets(), minDelay]).then(() => {
                 wrapper.remove();
                 iframe.classList.remove('pll-iframe-hidden');
                 iframe.removeAttribute('aria-hidden');
@@ -535,6 +568,10 @@
                 iframe.src = src;
                 window.dispatchEvent(new Event('resize'));
                 this.debug('iframe restored:', iframe.getAttribute('data-pll-id'));
+            }).catch(error => {
+                wrapper.classList.remove('is-busy');
+                this.debug('Viewer assets unavailable:', error);
+                this.showFacadeError(wrapper, this.options.i18n.assetsFailed);
             });
         }
 
