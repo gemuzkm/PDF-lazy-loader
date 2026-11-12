@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.2
+ * Version: 1.3.3
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.2' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.3' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -861,20 +861,19 @@ function pdf_lazy_loader_content_has_pdf( $c ) {
 // PDF Embedder Premium renders its viewer as the front page with
 // ?pdfemb-data=... (inside the iframe). The plugin must never touch that
 // request, otherwise the viewer's own pdf-viewer.min.js / CSS are stripped.
-// Only a value that decodes to the viewer JSON (with a 'url') counts: an
-// arbitrary ?pdfemb-data=x must not switch the facade off on a normal page.
+// The condition mirrors Premium's Viewer::is_viewer(): front page + non-empty
+// ?pdfemb-data=. Premium then prints the viewer and dies on template_redirect:0,
+// so no post content is rendered. On any other URL (and in REST) Premium
+// ignores the parameter, so it must not switch the facade off here either.
 function pdf_lazy_loader_is_pdfemb_viewer_request() {
     static $is = null;
     if ( $is !== null ) return $is;
-    $is = false;
-    // phpcs:disable WordPress.Security.NonceVerification.Recommended
-    if ( isset( $_GET['pdfemb-data'] ) && is_string( $_GET['pdfemb-data'] ) ) {
-        $raw  = sanitize_text_field( wp_unslash( $_GET['pdfemb-data'] ) );
-        $json = json_decode( (string) pdf_lazy_loader_b64url_decode( $raw ), true );
-        $is   = is_array( $json ) && ! empty( $json['url'] ) && is_string( $json['url'] );
-    }
-    // phpcs:enable
-    return $is;
+    // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+    if ( empty( $_GET['pdfemb-data'] ) ) return $is = false;
+    // Without Premium nobody takes the front page over
+    if ( ! defined( 'PDFEMB_PREMIUM_PLUGIN_DIR' ) && ! class_exists( 'PDFEmbedder\\Premium\\Viewer\\Viewer', false ) ) return $is = false;
+    if ( ! did_action( 'wp' ) ) return false; // main query not ready yet — do not cache
+    return $is = is_front_page();
 }
 
 function pdf_lazy_loader_has_pdf_iframes() {
