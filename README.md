@@ -28,6 +28,7 @@ Click-to-load facade for **PDF Embedder Premium** on WordPress. The viewer ifram
 | Button Color / Button Hover Color | `#FF6B6B` / `#E63946` | Shown darker when contrast requires it (`#C25151` / `#A54545` for the defaults) |
 | Minimum Loading Time | 300 ms | Minimum spinner time, 0–5000 ms; runs in parallel with loading the viewer files |
 | Show Download Button | Off | Adds a Download button next to View PDF |
+| Download via Blob | Off | Fetches the complete PDF before saving through a temporary Blob URL; only affects the facade Download button |
 | Facade height: desktop / tablet / mobile | 600 / 500 / 400 px | Breakpoints: ≥ 1024 px, 768–1023 px, < 768 px |
 | Enable Turnstile | Off | Shows the Turnstile widget before a PDF is opened or downloaded |
 | Site Key, Secret Key | — | The secret key is used only on the server and is never printed back into the form |
@@ -58,6 +59,12 @@ Notes on server-side verification:
 - Allow `POST /wp-json/pdf-lazy-loader/v1/verify` in your firewall rules. A Content-Security-Policy needs `https://challenges.cloudflare.com` in `script-src` and `frame-src`.
 - Requests are limited to 20 per minute per IP address when a persistent object cache (Redis, Memcached) is available; without one there is no limit. The address is `REMOTE_ADDR`: behind a proxy or CDN the web server has to restore the visitor address.
 - Changing the WordPress salts invalidates the references in cached pages; purge the page cache afterwards.
+
+## Blob downloads
+
+Enable **Download via Blob** together with **Show Download Button** to save using a temporary `blob:` URL. PDF viewing, the viewer toolbar and Turnstile validation are unchanged. The filename is taken from the PDF URL, with `document.pdf` as a fallback.
+
+The complete file must be received before saving, so large PDFs can take longer and require additional browser resources. External hosts must allow CORS. HTTP errors, empty/non-PDF responses and requests exceeding 120 seconds show an error and allow a retry; there is no automatic direct-link fallback. The original URL remains visible in developer tools. Download-history presentation depends on the browser and is not a security guarantee.
 
 ## Limits
 
@@ -93,6 +100,10 @@ git push origin v1.3.5
 ```
 
 ## Changelog
+
+### v1.3.6
+- Optional Download via Blob setting (off by default), with busy state, error handling and retry; no direct-link fallback
+- PDF viewing and server-side Turnstile validation are unchanged
 
 ### v1.3.5
 - Hover, focus and touch now only preload the viewer files (`<link rel="preload">`); viewer scripts run after the click

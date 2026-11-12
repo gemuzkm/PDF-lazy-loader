@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.5
+ * Version: 1.3.6
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.5' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.6' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -52,6 +52,7 @@ add_filter( 'pre_update_option_pdf_lazy_loader_enable_download',  'pdf_lazy_load
 add_filter( 'pre_update_option_pdf_lazy_loader_enable_turnstile', 'pdf_lazy_loader_update_checkbox', 10, 2 );
 add_filter( 'pre_update_option_pdf_lazy_loader_debug_mode',       'pdf_lazy_loader_update_checkbox', 10, 2 );
 add_filter( 'pre_update_option_pdf_lazy_loader_server_verify',    'pdf_lazy_loader_update_checkbox', 10, 2 );
+add_filter( 'pre_update_option_pdf_lazy_loader_blob_download', 'pdf_lazy_loader_update_checkbox', 10, 2 );
 // Empty secret key field = keep the stored key (the key is never printed back into the form)
 add_filter( 'pre_update_option_pdf_lazy_loader_turnstile_secret_key', 'pdf_lazy_loader_keep_secret_key', 10, 2 );
 
@@ -338,6 +339,7 @@ function pdf_lazy_loader_add_admin_menu() {
 // Settings registration
 // ---------------------------------------------------------------------------
 function pdf_lazy_loader_register_settings() {
+    register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_blob_download', array( 'type' => 'boolean', 'sanitize_callback' => 'pdf_lazy_loader_sanitize_checkbox', 'default' => false ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color',           array( 'type' => 'string',  'sanitize_callback' => 'sanitize_hex_color', 'default' => '#FF6B6B' ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_button_color_hover',      array( 'type' => 'string',  'sanitize_callback' => 'sanitize_hex_color', 'default' => '#E63946' ) );
     register_setting( 'pdf_lazy_loader_settings', 'pdf_lazy_loader_loading_time',            array( 'type' => 'integer', 'sanitize_callback' => 'pdf_lazy_loader_sanitize_loading_time', 'default' => PDF_LAZY_LOADER_DEFAULT_WAIT ) );
@@ -397,6 +399,7 @@ function pdf_lazy_loader_get_settings() {
         'enableTurnstile'     => $to_bool( get_option( 'pdf_lazy_loader_enable_turnstile', false ) ),
         'turnstileSiteKey'    => sanitize_text_field( get_option( 'pdf_lazy_loader_turnstile_site_key', '' ) ),
         'debugMode'           => $to_bool( get_option( 'pdf_lazy_loader_debug_mode', false ) ),
+        'blobDownload'        => $to_bool( get_option( 'pdf_lazy_loader_blob_download', false ) ),
         'serverVerify'        => false,
     );
     $settings['serverVerify'] = pdf_lazy_loader_server_verify_active( $settings );
@@ -420,6 +423,8 @@ function pdf_lazy_loader_get_i18n() {
         'verifyServer' => __( 'Verification could not be completed. Please try again.', 'pdf-lazy-loader' ),
         'verifyReload' => __( 'This page is outdated. Please reload it.', 'pdf-lazy-loader' ),
         'retry'        => __( 'Try again', 'pdf-lazy-loader' ),
+        'downloading'  => __( 'Preparing download...', 'pdf-lazy-loader' ),
+        'downloadFailed' => __( 'Download failed. Please try again. External files must allow CORS.', 'pdf-lazy-loader' ),
     );
 }
 
@@ -1080,6 +1085,24 @@ function pdf_lazy_loader_settings_page() {
                 </table>
             </div>
 
+
+            <div class="pll-section">
+                <div class="pll-section__header"><h2 class="pll-section__title"><?php esc_html_e( 'Downloads', 'pdf-lazy-loader' ); ?></h2></div>
+                <table class="form-table pll-table">
+                    <tr>
+                        <th scope="row"><label for="pdf_lazy_loader_blob_download"><?php esc_html_e( 'Download via Blob', 'pdf-lazy-loader' ); ?></label></th>
+                        <td>
+                            <input type="hidden" name="pdf_lazy_loader_blob_download" value="0" />
+                            <label class="pll-toggle">
+                                <input type="checkbox" id="pdf_lazy_loader_blob_download" name="pdf_lazy_loader_blob_download" value="1" <?php checked( $settings['blobDownload'], true ); ?> />
+                                <span class="pll-toggle__slider"></span>
+                            </label>
+                            <span class="description"><?php esc_html_e( 'Applies to the facade Download button only (enable Show Download Button above). The complete PDF is fetched before saving through a temporary Blob URL. External files require CORS. The original request remains visible in developer tools. No direct-link fallback is used on failure.', 'pdf-lazy-loader' ); ?></span>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
             <div class="pll-section">
                 <div class="pll-section__header"><span class="pll-section__icon">📐</span><h2 class="pll-section__title">Facade Heights</h2></div>
                 <table class="form-table pll-table">
@@ -1211,6 +1234,7 @@ function pdf_lazy_loader_uninstall() {
         'pdf_lazy_loader_facade_height_desktop', 'pdf_lazy_loader_facade_height_tablet',
         'pdf_lazy_loader_facade_height_mobile', 'pdf_lazy_loader_enable_turnstile',
         'pdf_lazy_loader_turnstile_site_key', 'pdf_lazy_loader_turnstile_secret_key', 'pdf_lazy_loader_server_verify',
+        'pdf_lazy_loader_blob_download',
         'pdf_lazy_loader_debug_mode', 'pdf_lazy_loader_db_version',
     );
     foreach ( $options as $o ) delete_option( $o );

@@ -15,6 +15,8 @@
         verifyLoad: 'Failed to load verification.',
         verifyServer: 'Verification could not be completed. Please try again.',
         verifyReload: 'This page is outdated. Please reload it.',
+        downloading: 'Preparing download...',
+        downloadFailed: 'Download failed. Please try again. External files must allow CORS.',
         retry: 'Try again'
     };
 
@@ -24,9 +26,10 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.5',
+            version:          raw.version || '1.3.6',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
+            blobDownload:     toBool(raw.blobDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
             turnstileSiteKey: raw.turnstileSiteKey || '',
             verifyUrl:        raw.verifyUrl || '',
@@ -535,11 +538,78 @@
             });
         }
 
-        triggerDownload(url) {
-            if (!url) return;
+        async triggerDownload(url) {
+            if (!url) throw new Error('Missing PDF URL');
+            if (!this.options.blobDownload) {
+                const a = document.createElement('a');
+                a.href = url; a.download = ''; a.style.display = 'none';
+                document.body.appendChild(a); a.click(); a.remove();
+                return;
+            }
+
+            const source = new URL(url, window.location.href);
+            if (!/^https?:$/.test(source.protocol)) throw new Error('Unsupported download URL');
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 120000);
+            let blob;
+            try {
+                const response = await fetch(source.href, {
+                    credentials: 'same-origin', signal: controller.signal
+                });
+                if (!response.ok) throw new Error('Download HTTP ' + response.status);
+                blob = await response.blob();
+                if (!blob.size) throw new Error('Empty download');
+                // Reject HTML error/login pages returned with HTTP 200.
+                const header = await blob.slice(0, 1024).text();
+                if (!header.includes('%PDF-')) throw new Error('Response is not a PDF');
+            } finally {
+                clearTimeout(timeout);
+            }
+
+            let name = source.pathname.split('/').pop() || '';
+            try { name = decodeURIComponent(name); } catch (_) {}
+            name = name.replace(/[\\/<>:"|?*\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, '_').slice(0, 180);
+            if (!/\.pdf$/i.test(name)) name = 'document.pdf';
+            const objectUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = ''; a.style.display = 'none';
-            document.body.appendChild(a); a.click(); a.remove();
+            a.href = objectUrl; a.download = name; a.style.display = 'none';
+            try {
+                document.body.appendChild(a);
+                a.click();
+            } finally {
+                a.remove();
+                // Allow browsers to consume the URL before releasing the Blob.
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+            }
+        }
+
+        async downloadForFacade(wrapper, url) {
+            if (wrapper.classList.contains('is-busy')) return;
+            wrapper.classList.add('is-busy');
+            const buttons = Array.from(wrapper.querySelectorAll('button'));
+            const disabled = buttons.map(b => b.disabled);
+            buttons.forEach(b => { b.disabled = true; });
+            const old = wrapper.querySelector('.pdf-facade-error');
+            if (old) old.remove();
+            if (this.options.blobDownload) {
+                this.showSpinner(wrapper);
+                const label = wrapper.querySelector('.pdf-loading-text');
+                if (label) label.textContent = this.options.i18n.downloading;
+            }
+            try {
+                await this.triggerDownload(url);
+                const content = wrapper.querySelector('.pdf-facade-content');
+                const spinner = wrapper.querySelector('.pdf-loading-spinner');
+                if (spinner) spinner.remove();
+                if (content) content.classList.remove('is-loading');
+                wrapper._pllSpinStart = 0;
+            } catch (err) {
+                this.debug('Download error:', err);
+                this.showFacadeError(wrapper, this.options.i18n.downloadFailed);
+            } finally {
+                wrapper.classList.remove('is-busy');
+                buttons.forEach((b, i) => { b.disabled = disabled[i]; });
+            }
         }
 
         handleDownloadPDF(wrapper) {
@@ -549,11 +619,11 @@
                     const sp = content && content.querySelector('.pdf-loading-spinner');
                     if (sp) sp.remove();
                     if (content) content.classList.remove('is-loading');
-                    this.triggerDownload(e.pdf);
+                    void this.downloadForFacade(wrapper, e.pdf);
                 });
                 return;
             }
-            const doDownload = () => this.triggerDownload(this.decryptURL(wrapper.getAttribute('data-pdf-url-enc') || ''));
+            const doDownload = () => { void this.downloadForFacade(wrapper, this.decryptURL(wrapper.getAttribute('data-pdf-url-enc') || '')); };
             if (wrapper.classList.contains('is-busy')) return;
             if (this.options.enableTurnstile && this.options.turnstileSiteKey && !wrapper.getAttribute('data-turnstile-token')) {
                 wrapper.classList.add('is-busy');
