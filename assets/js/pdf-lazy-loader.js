@@ -24,7 +24,7 @@
     const getOptions = () => {
         const raw = (typeof pdfLazyLoaderData !== 'undefined' && pdfLazyLoaderData) ? pdfLazyLoaderData : {};
         return {
-            version:          raw.version || '1.3.1',
+            version:          raw.version || '1.3.2',
             loadingTime:      Math.max(0, toInt(raw.loadingTime, 300)),
             enableDownload:   toBool(raw.enableDownload),
             enableTurnstile:  toBool(raw.enableTurnstile),
@@ -38,12 +38,32 @@
 
     const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+    // Binary string (one char per byte) -> text: UTF-8, raw string as a fallback
+    const binToText = bin => {
+        try {
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (e) { return bin; }
+    };
+
+    // Text -> binary string of its UTF-8 bytes (what PHP works with)
+    const textToBin = str => {
+        const bytes = new TextEncoder().encode(str);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return bin;
+    };
+
     // base64url (PDF Embedder Premium ?pdfemb-data=) and plain base64
     const b64decode = s => {
         let b = String(s).replace(/-/g, '+').replace(/_/g, '/');
         while (b.length % 4) b += '=';
-        return atob(b);
+        return binToText(atob(b));
     };
+
+    // Error that carries the translated text to show in the facade
+    const pllError = (message, text) => Object.assign(new Error(message), { pllText: text });
 
     const SRC_INDICATORS = ['.pdf', 'application/pdf', 'pdf-embedder', 'pdfembed', 'pdfjs', 'viewer.html', 'pdf-viewer', 'pdfemb-data'];
     const CLS_INDICATORS = ['pdf-embedder', 'pdfembed', 'pdf-viewer', 'pdf-container', 'pdfemb-wrapper'];
@@ -73,8 +93,10 @@
             for (let i = 0; i < str.length; i++) out += String.fromCharCode(str.charCodeAt(i) ^ k.charCodeAt(i % k.length));
             return out;
         }
-        encryptURL(url) { if (!url) return ''; try { return btoa(this.xor(url)); } catch (e) { return ''; } }
-        decryptURL(enc) { if (!enc) return ''; try { return this.xor(atob(enc)); } catch (e) { this.debug('decryptURL error:', e); return ''; } }
+        // XOR runs over UTF-8 bytes — byte-compatible with pdf_lazy_loader_encrypt_url()
+        // in PHP, so non-ASCII URLs (e.g. Cyrillic file names) survive the round trip.
+        encryptURL(url) { if (!url) return ''; try { return btoa(this.xor(textToBin(url))); } catch (e) { return ''; } }
+        decryptURL(enc) { if (!enc) return ''; try { return binToText(this.xor(atob(enc))); } catch (e) { this.debug('decryptURL error:', e); return ''; } }
 
         // ------------------------------------------------------------------
         // Init: event delegation (works for server-rendered and JS facades)
@@ -257,7 +279,10 @@
             else src = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
             if (!src || !iframe.parentNode) return;
 
-            if (!enc) iframe.setAttribute('data-pdf-lazy-original-src-enc', this.encryptURL(src));
+            // Never strip the src unless a restorable copy exists
+            const stored = enc || this.encryptURL(src);
+            if (!stored) return;
+            if (!enc) iframe.setAttribute('data-pdf-lazy-original-src-enc', stored);
             iframe.removeAttribute('src');
             iframe.removeAttribute('data-pdf-lazy-intercepted');
 
@@ -333,11 +358,14 @@
 
         isServerMode(wrapper) { return !!(this.options.verifyUrl && this.getRef(wrapper)); }
 
-        serverResolve(token) {
+        serverResolve(token, firstRef) {
             if (!this._resolved) this._resolved = {};
-            const refs = Array.from(document.querySelectorAll('iframe[data-pll-ref]'))
+            let refs = Array.from(document.querySelectorAll('iframe[data-pll-ref]'))
                 .map(f => f.getAttribute('data-pll-ref'))
                 .filter((r, i, a) => r && !this._resolved[r] && a.indexOf(r) === i);
+            // The clicked PDF goes first: the server releases the refs of its post only
+            if (firstRef) refs = [firstRef].concat(refs.filter(r => r !== firstRef));
+            refs = refs.slice(0, 50);
             const t0 = performance.now();
             return fetch(this.options.verifyUrl, {
                 method: 'POST',
@@ -386,6 +414,24 @@
             msg.textContent = text;
         }
 
+        failText(err) {
+            const t = this.options.i18n;
+            if (err && err.pllText) return err.pllText;
+            if (err && err.code === 'stale_refs') return t.verifyReload;
+            if (err && err.code && err.message) return err.message;
+            return t.verifyServer;
+        }
+
+        // Single failure path for every verification error (script blocked,
+        // widget error / expiry, server rejection): the facade gets its buttons
+        // back with a message, and the next click renders a fresh widget.
+        verificationFailed(wrapper, err) {
+            wrapper.classList.remove('is-busy');
+            this.debug('Verification error:', err);
+            this.resetTurnstile(wrapper); // tokens are single-use
+            this.showFacadeError(wrapper, this.failText(err));
+        }
+
         // Ensures the URLs for this wrapper are available, then runs cb(entry)
         withServerUrls(wrapper, cb) {
             const ref = this.getRef(wrapper);
@@ -396,20 +442,14 @@
             if (old) old.remove();
             this.loadTurnstileScript()
                 .then(() => this.initializeTurnstile(wrapper))
-                .then(token => { this.showSpinner(wrapper); return this.serverResolve(token); })
+                .then(token => { this.showSpinner(wrapper); return this.serverResolve(token, ref); })
                 .then(() => {
                     wrapper.classList.remove('is-busy');
                     const e = this._resolved && this._resolved[ref];
                     if (!e) throw Object.assign(new Error(this.options.i18n.verifyReload), { code: 'stale_refs' });
                     cb(e);
                 })
-                .catch(err => {
-                    wrapper.classList.remove('is-busy');
-                    this.debug('server verify error:', err);
-                    this.resetTurnstile(wrapper); // tokens are single-use — next click gets a fresh widget
-                    if (err && err.message && /Turnstile/.test(err.message)) return; // widget already shows its message
-                    this.showFacadeError(wrapper, err && err.code === 'stale_refs' ? this.options.i18n.verifyReload : ((err && err.message) || this.options.i18n.verifyServer));
-                });
+                .catch(err => this.verificationFailed(wrapper, err));
         }
 
         handleViewPDF(wrapper) {
@@ -426,7 +466,7 @@
                 this.loadTurnstileScript()
                     .then(() => this.initializeTurnstile(wrapper))
                     .then(() => { wrapper.classList.remove('is-busy'); this._doLoadPDF(wrapper); })
-                    .catch(err => { wrapper.classList.remove('is-busy'); this.debug('Turnstile error:', err); });
+                    .catch(err => this.verificationFailed(wrapper, err));
                 return;
             }
             this._doLoadPDF(wrapper);
@@ -477,11 +517,13 @@
                 return;
             }
             const doDownload = () => this.triggerDownload(this.decryptURL(wrapper.getAttribute('data-pdf-url-enc') || ''));
+            if (wrapper.classList.contains('is-busy')) return;
             if (this.options.enableTurnstile && this.options.turnstileSiteKey && !wrapper.getAttribute('data-turnstile-token')) {
+                wrapper.classList.add('is-busy');
                 this.loadTurnstileScript()
                     .then(() => this.initializeTurnstile(wrapper))
-                    .then(doDownload)
-                    .catch(err => this.debug('Turnstile error:', err));
+                    .then(() => { wrapper.classList.remove('is-busy'); doDownload(); })
+                    .catch(err => this.verificationFailed(wrapper, err));
                 return;
             }
             doDownload();
@@ -498,7 +540,7 @@
                     let n = 0;
                     const t = setInterval(() => {
                         if (typeof turnstile !== 'undefined') { clearInterval(t); resolve(); }
-                        else if (++n >= 100) { clearInterval(t); reject(new Error('Turnstile timeout')); }
+                        else if (++n >= 100) { clearInterval(t); reject(pllError('Turnstile timeout', this.options.i18n.verifyLoad)); }
                     }, 50);
                 };
                 if (document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) { waitReady(); return; }
@@ -506,7 +548,8 @@
                 s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
                 s.async = true;
                 s.onload = waitReady;
-                s.onerror = () => reject(new Error('Failed to load Turnstile'));
+                // The failed tag is removed so the next click loads the script again
+                s.onerror = () => { s.remove(); reject(pllError('Failed to load Turnstile', this.options.i18n.verifyLoad)); };
                 document.head.appendChild(s);
             });
             this._tsPromise.catch(() => { this._tsPromise = null; });
@@ -521,6 +564,8 @@
 
                 const btns = content.querySelector('.pdf-facade-buttons');
                 const info = content.querySelector('.pdf-facade-info');
+                const stale = content.querySelector('.pdf-facade-error');
+                if (stale) stale.remove();
 
                 let box = content.querySelector('.pdf-turnstile-container');
                 if (!box) {
@@ -540,7 +585,6 @@
                 }
                 msg.textContent = t.verify;
                 msg.classList.remove('is-error');
-                const fail = text => { msg.textContent = text; msg.classList.add('is-error'); };
 
                 // Widget is removed through the Turnstile API (not just DOM removal),
                 // otherwise api.js keeps polling it: "Cannot find Widget …".
@@ -573,13 +617,12 @@
                     const wid = turnstile.render(slot, {
                         sitekey: this.options.turnstileSiteKey, theme: 'light', size: 'normal', action: 'pdf_view',
                         callback: token => { wrapper.setAttribute('data-turnstile-token', token); restore(); resolve(token); },
-                        'error-callback':   () => { wrapper.removeAttribute('data-turnstile-token'); fail(t.verifyFailed);  reject(new Error('Turnstile failed')); },
-                        'expired-callback': () => { wrapper.removeAttribute('data-turnstile-token'); fail(t.verifyExpired); reject(new Error('Turnstile expired')); }
+                        'error-callback':   () => { wrapper.removeAttribute('data-turnstile-token'); reject(pllError('Turnstile failed', t.verifyFailed)); },
+                        'expired-callback': () => { wrapper.removeAttribute('data-turnstile-token'); reject(pllError('Turnstile expired', t.verifyExpired)); }
                     });
                     if (wid) wrapper.setAttribute('data-turnstile-widget-id', wid);
                 } catch (e) {
-                    fail(t.verifyError);
-                    reject(e);
+                    reject(pllError('Turnstile render error', t.verifyError));
                 }
             });
         }
