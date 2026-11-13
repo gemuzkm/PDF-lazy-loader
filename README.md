@@ -12,7 +12,9 @@ Click-to-load facade for **PDF Embedder Premium** on WordPress. The viewer ifram
 ## Requirements
 
 - WordPress 5.7 or later (tested up to 7.1), PHP 7.4 or later
-- PDF Embedder Premium (Legacy) 5.3.x with the free PDF Embedder plugin active
+- Reference implementation reviewed: PDF Embedder Premium (Legacy) 5.3.2, with the free PDF Embedder plugin active (Premium declares Lite 4.9.3 or later). This is a code-reviewed compatibility target, not a claim that every Lite/Premium combination has been tested.
+- The supported Premium stack requires WordPress 6.1 or later (Premium 5.3.2 requirement), even though PDF Lazy Loader alone declares WordPress 5.7+.
+- The facade targets Premium iframe output using the front-page `?pdfemb-data=` viewer route. Free PDF Embedder without Premium uses a different renderer and does not get the click-to-load facade. Other Premium versions, Secure/Pro editions and modified distributions require separate compatibility testing.
 - For server-side verification: Cloudflare Turnstile site and secret keys, PHP OpenSSL with `aes-256-gcm`
 
 ## Installation
@@ -72,6 +74,10 @@ The complete file must be received before saving, so large PDFs can take longer 
 - Server-side mode hides the address until Turnstile is passed, but the PDF remains a public file. Anyone who already knows its URL can download it.
 - The facade needs the iframe that PDF Embedder **Premium** renders. With only the free plugin there is no iframe, so no facade is shown and the viewer loads normally.
 
+## Translations
+
+Settings, the preview and facade messages use the `pdf-lazy-loader` text domain. English is the source language; Russian (`ru_RU`) is bundled as PO/MO catalogs. WordPress selects translations using the current locale (including the administrator user language). The POT template is in `languages/pdf-lazy-loader.pot`.
+
 ## For developers
 
 | Filter | Purpose |
@@ -100,6 +106,12 @@ git push origin v1.3.5
 ```
 
 ## Changelog
+
+### v1.3.8
+- Localized all settings labels, help text, status messages and the preview contrast note; added POT and Russian PO/MO catalogs
+- Removed the unused admin.js jQuery dependency
+- Clarified the code-reviewed Premium Legacy 5.3.2 compatibility target and its requirements
+- Removed obsolete patch scripts and temporary maintenance automation; retained the three standard workflows
 
 ### v1.3.7
 - Viewer asset failures keep the facade visible and allow another attempt with View PDF

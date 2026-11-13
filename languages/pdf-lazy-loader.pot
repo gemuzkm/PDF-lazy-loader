@@ -1,0 +1,172 @@
+# PDF Lazy Loader translations.
+msgid ""
+msgstr "Project-Id-Version: PDF Lazy Loader 1.3.8\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n"
+
+msgid "Appearance"
+msgstr ""
+
+msgid "Applies only to the facade Download button. The complete PDF is fetched before saving. External files require CORS. The original request remains visible in developer tools; there is no direct-link fallback on failure."
+msgstr ""
+
+msgid "Button Color"
+msgstr ""
+
+msgid "Button Hover Color"
+msgstr ""
+
+msgid "Button and PDF icon color. A darker shade is used when required for contrast with white text."
+msgstr ""
+
+msgid "Button color on hover and keyboard focus."
+msgstr ""
+
+msgid "Click the button below to load the document"
+msgstr ""
+
+msgid "Cloudflare Turnstile"
+msgstr ""
+
+msgid "Colors are darkened for WCAG AA contrast with white text: button %1$s, hover %2$s."
+msgstr ""
+
+msgid "Desktop (≥ 1024 px)"
+msgstr ""
+
+msgid "Diagnostics"
+msgstr ""
+
+msgid "Document will be loaded on first access"
+msgstr ""
+
+msgid "Download"
+msgstr ""
+
+msgid "Download failed. Please try again. External files must allow CORS."
+msgstr ""
+
+msgid "Download via Blob"
+msgstr ""
+
+msgid "Downloads"
+msgstr ""
+
+msgid "Enable Debug Mode"
+msgstr ""
+
+msgid "Enable Turnstile"
+msgstr ""
+
+msgid "Facade Heights"
+msgstr ""
+
+msgid "Failed to load verification."
+msgstr ""
+
+msgid "Height in pixels."
+msgstr ""
+
+msgid "Key saved"
+msgstr ""
+
+msgid "Live Preview"
+msgstr ""
+
+msgid "Loading PDF..."
+msgstr ""
+
+msgid "Manage Cloudflare Turnstile widgets"
+msgstr ""
+
+msgid "Minimum Loading Time (ms)"
+msgstr ""
+
+msgid "Minimum spinner duration (0–5000 ms), in parallel with asset loading. Default: 300 ms."
+msgstr ""
+
+msgid "Mobile (< 768 px)"
+msgstr ""
+
+msgid "PDF Document"
+msgstr ""
+
+msgid "PDF Lazy Loader Settings"
+msgstr ""
+
+msgid "Please complete verification to continue"
+msgstr ""
+
+msgid "Preparing download..."
+msgstr ""
+
+msgid "Require verification before viewing or downloading a PDF."
+msgstr ""
+
+msgid "Save Changes"
+msgstr ""
+
+msgid "Secret Key"
+msgstr ""
+
+msgid "Server-side verification"
+msgstr ""
+
+msgid "Server-side verification is active."
+msgstr ""
+
+msgid "Server-side verification is not active. Check Turnstile keys and OpenSSL support. Client-side verification is used instead."
+msgstr ""
+
+msgid "Show Download Button"
+msgstr ""
+
+msgid "Show a Download button alongside View PDF."
+msgstr ""
+
+msgid "Site Key"
+msgstr ""
+
+msgid "Tablet (768–1023 px)"
+msgstr ""
+
+msgid "The facade with the current colors, heights and Download setting."
+msgstr ""
+
+msgid "The site key from your Cloudflare Turnstile widget."
+msgstr ""
+
+msgid "This page is outdated. Please reload it."
+msgstr ""
+
+msgid "Try again"
+msgstr ""
+
+msgid "Used only by server-side verification. Leave empty to keep the saved key."
+msgstr ""
+
+msgid "Validate the token on the server before releasing PDF URLs. Requires site and secret keys and OpenSSL (AES-256-GCM). One verification request per post with PDFs; allow the verify REST route in your firewall."
+msgstr ""
+
+msgid "Verification could not be completed. Please try again."
+msgstr ""
+
+msgid "Verification error. Refresh the page."
+msgstr ""
+
+msgid "Verification expired."
+msgstr ""
+
+msgid "Verification failed."
+msgstr ""
+
+msgid "View PDF"
+msgstr ""
+
+msgid "Viewer files could not be loaded. Click View PDF to try again."
+msgstr ""
+
+msgid "Write diagnostic messages to the browser console. Disable in production."
+msgstr ""
+
+msgid "You do not have sufficient permissions to access this page."
+msgstr ""
+

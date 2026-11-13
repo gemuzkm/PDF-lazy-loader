@@ -3,7 +3,7 @@
  * Plugin Name: PDF Lazy Loader
  * Plugin URI: https://github.com/gemuzkm/pdf-lazy-loader
  * Description: Defers PDF Embedder output behind a lightweight click-to-load facade with optional Cloudflare Turnstile check. No PDF/viewer assets are loaded until the visitor clicks "View PDF".
- * Version: 1.3.7
+ * Version: 1.3.8
  * Author: Your TM
  * Author URI: https://procarmanuals.com
  * License: GPL v2 or later
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'PDF_LAZY_LOADER_VERSION',      '1.3.7' );
+define( 'PDF_LAZY_LOADER_VERSION',      '1.3.8' );
 define( 'PDF_LAZY_LOADER_DB_VERSION',   '2' );
 define( 'PDF_LAZY_LOADER_DEFAULT_WAIT', 300 );
 define( 'PDF_LAZY_LOADER_PLUGIN_DIR',   plugin_dir_path( __FILE__ ) );
@@ -33,6 +33,7 @@ add_action( 'admin_menu',            'pdf_lazy_loader_add_admin_menu' );
 add_action( 'admin_init',            'pdf_lazy_loader_register_settings' );
 add_action( 'admin_enqueue_scripts', 'pdf_lazy_loader_enqueue_admin_scripts' );
 add_action( 'plugins_loaded',        'pdf_lazy_loader_maybe_upgrade' );
+add_action( 'init', 'pdf_lazy_loader_load_textdomain' );
 
 // Frontend
 add_action( 'wp_head',            'pdf_lazy_loader_add_inline_script', 1 );
@@ -70,6 +71,10 @@ add_action( 'rest_api_init',        'pdf_lazy_loader_register_rest_filters' );
 // v2: old default spinner delay 1500 ms -> 300 ms (delay now runs in parallel
 // with asset loading). Custom values other than 1500 are left untouched.
 // ---------------------------------------------------------------------------
+function pdf_lazy_loader_load_textdomain() {
+    load_plugin_textdomain( 'pdf-lazy-loader', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+}
+
 function pdf_lazy_loader_maybe_upgrade() {
     if ( get_option( 'pdf_lazy_loader_db_version' ) === PDF_LAZY_LOADER_DB_VERSION ) return;
     if ( (int) get_option( 'pdf_lazy_loader_loading_time', 0 ) === 1500 ) {
@@ -423,6 +428,8 @@ function pdf_lazy_loader_get_i18n() {
         'verifyServer' => __( 'Verification could not be completed. Please try again.', 'pdf-lazy-loader' ),
         'verifyReload' => __( 'This page is outdated. Please reload it.', 'pdf-lazy-loader' ),
         'assetsFailed' => __( 'Viewer files could not be loaded. Click View PDF to try again.', 'pdf-lazy-loader' ),
+        // translators: %1$s: adjusted button color; %2$s: adjusted hover color.
+        'previewContrast' => __( 'Colors are darkened for WCAG AA contrast with white text: button %1$s, hover %2$s.', 'pdf-lazy-loader' ),
         'retry'        => __( 'Try again', 'pdf-lazy-loader' ),
         'downloading'  => __( 'Preparing download...', 'pdf-lazy-loader' ),
         'downloadFailed' => __( 'Download failed. Please try again. External files must allow CORS.', 'pdf-lazy-loader' ),
@@ -438,7 +445,7 @@ function pdf_lazy_loader_enqueue_admin_scripts( $hook ) {
     // The live preview is built from the real facade markup and stylesheet
     wp_enqueue_style(  'pdf-lazy-loader', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/pdf-lazy-loader.css', array(), PDF_LAZY_LOADER_VERSION );
     wp_enqueue_style(  'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/css/admin.css', array( 'pdf-lazy-loader' ), PDF_LAZY_LOADER_VERSION );
-    wp_enqueue_script( 'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/admin.js',  array( 'jquery' ), PDF_LAZY_LOADER_VERSION, true );
+    wp_enqueue_script( 'pdf-lazy-loader-admin', PDF_LAZY_LOADER_PLUGIN_URL . 'assets/js/admin.js',  array(), PDF_LAZY_LOADER_VERSION, true );
     $data = array_merge( $settings, array(
         'i18n'            => pdf_lazy_loader_get_i18n(),
         'enforceContrast' => (bool) apply_filters( 'pdf_lazy_loader_enforce_contrast', true ),
@@ -1030,190 +1037,82 @@ function pdf_lazy_loader_enqueue_frontend_scripts() {
 // ---------------------------------------------------------------------------
 // Settings page
 // ---------------------------------------------------------------------------
-function pdf_lazy_loader_settings_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'pdf-lazy-loader' ) );
+function pdf_lazy_loader_admin_field( $id, $label, $type, $value, $description = '', $args = array() ) {
+    echo '<tr><th scope="row"><label for="' . esc_attr( $id ) . '">' . esc_html( $label ) . '</label></th><td>';
+    if ( $type === 'checkbox' ) {
+        echo '<input type="hidden" name="' . esc_attr( $id ) . '" value="0" />';
+        echo '<label class="pll-toggle"><input type="checkbox" id="' . esc_attr( $id ) . '" name="' . esc_attr( $id ) . '" value="1" ' . checked( $value, true, false ) . ' /><span class="pll-toggle__slider"></span></label>';
+    } else {
+        $class = $type === 'number' ? 'pll-input-sm' : ( $type === 'color' ? '' : 'regular-text' );
+        echo '<input type="' . esc_attr( $type ) . '" id="' . esc_attr( $id ) . '" name="' . esc_attr( $id ) . '" value="' . esc_attr( $value ) . '" class="' . esc_attr( $class ) . '"';
+        foreach ( array( 'min', 'max', 'step', 'placeholder', 'autocomplete' ) as $attribute ) {
+            if ( isset( $args[ $attribute ] ) ) echo ' ' . esc_attr( $attribute ) . '="' . esc_attr( $args[ $attribute ] ) . '"';
+        }
+        echo ' />';
+        if ( $type === 'color' ) {
+            $code_id = $id === 'pdf_lazy_loader_button_color' ? 'pll-color-val-main' : 'pll-color-val-hover';
+            echo ' <code class="pll-color-value" id="' . esc_attr( $code_id ) . '">' . esc_html( $value ) . '</code>';
+        }
     }
-    $settings = pdf_lazy_loader_get_settings();
-    ?>
-    <div class="wrap pdf-lazy-loader-settings">
-        <h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
-        <?php settings_errors( 'pdf_lazy_loader_settings' ); ?>
-        <form method="post" action="options.php">
-            <?php settings_fields( 'pdf_lazy_loader_settings' ); ?>
-
-            <div class="pll-section">
-                <div class="pll-section__header"><span class="pll-section__icon">🎨</span><h2 class="pll-section__title">Button &amp; Appearance</h2></div>
-                <table class="form-table pll-table">
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_button_color">Button Color</label></th>
-                        <td>
-                            <div class="pll-color-row">
-                                <input type="color" id="pdf_lazy_loader_button_color" name="pdf_lazy_loader_button_color" value="<?php echo esc_attr( $settings['buttonColor'] ); ?>" />
-                                <code class="pll-color-value" id="pll-color-val-main"><?php echo esc_html( $settings['buttonColor'] ); ?></code>
-                            </div>
-                            <span class="description">Color of the "View PDF" button and PDF icon. If white text on this color is below WCAG AA contrast (4.5:1), the frontend automatically uses a darker shade of the same hue.</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_button_color_hover">Button Hover Color</label></th>
-                        <td>
-                            <div class="pll-color-row">
-                                <input type="color" id="pdf_lazy_loader_button_color_hover" name="pdf_lazy_loader_button_color_hover" value="<?php echo esc_attr( $settings['buttonColorHover'] ); ?>" />
-                                <code class="pll-color-value" id="pll-color-val-hover"><?php echo esc_html( $settings['buttonColorHover'] ); ?></code>
-                            </div>
-                            <span class="description">Color on mouse hover / keyboard focus (contrast is enforced the same way)</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_loading_time">Minimum Loading Time (ms)</label></th>
-                        <td>
-                            <input type="number" id="pdf_lazy_loader_loading_time" name="pdf_lazy_loader_loading_time" value="<?php echo esc_attr( $settings['loadingTime'] ); ?>" min="0" max="5000" step="50" class="pll-input-sm" />
-                            <span class="description">Minimum spinner duration (0–5000 ms). Runs in parallel with viewer asset loading, so it only adds time when assets load faster than this value. Recommended: 300.</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_enable_download">Show Download Button</label></th>
-                        <td>
-                            <input type="hidden" name="pdf_lazy_loader_enable_download" value="0" />
-                            <label class="pll-toggle">
-                                <input type="checkbox" id="pdf_lazy_loader_enable_download" name="pdf_lazy_loader_enable_download" value="1" <?php checked( $settings['enableDownload'], true ); ?> />
-                                <span class="pll-toggle__slider"></span>
-                            </label>
-                            <span class="description">Show a Download button alongside View PDF</span>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-
-
-            <div class="pll-section">
-                <div class="pll-section__header"><h2 class="pll-section__title"><?php esc_html_e( 'Downloads', 'pdf-lazy-loader' ); ?></h2></div>
-                <table class="form-table pll-table">
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_blob_download"><?php esc_html_e( 'Download via Blob', 'pdf-lazy-loader' ); ?></label></th>
-                        <td>
-                            <input type="hidden" name="pdf_lazy_loader_blob_download" value="0" />
-                            <label class="pll-toggle">
-                                <input type="checkbox" id="pdf_lazy_loader_blob_download" name="pdf_lazy_loader_blob_download" value="1" <?php checked( $settings['blobDownload'], true ); ?> />
-                                <span class="pll-toggle__slider"></span>
-                            </label>
-                            <span class="description"><?php esc_html_e( 'Applies to the facade Download button only (enable Show Download Button above). The complete PDF is fetched before saving through a temporary Blob URL. External files require CORS. The original request remains visible in developer tools. No direct-link fallback is used on failure.', 'pdf-lazy-loader' ); ?></span>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="pll-section">
-                <div class="pll-section__header"><span class="pll-section__icon">📐</span><h2 class="pll-section__title">Facade Heights</h2></div>
-                <table class="form-table pll-table">
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_facade_height_desktop">Desktop <span class="pll-badge">≥ 1024px</span></label></th>
-                        <td><div class="pll-input-row"><input type="number" id="pdf_lazy_loader_facade_height_desktop" name="pdf_lazy_loader_facade_height_desktop" value="<?php echo esc_attr( $settings['facadeHeightDesktop'] ); ?>" min="200" max="2000" step="10" class="pll-input-sm" /><span class="pll-unit">px</span></div></td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_facade_height_tablet">Tablet <span class="pll-badge">768–1023px</span></label></th>
-                        <td><div class="pll-input-row"><input type="number" id="pdf_lazy_loader_facade_height_tablet" name="pdf_lazy_loader_facade_height_tablet" value="<?php echo esc_attr( $settings['facadeHeightTablet'] ); ?>" min="200" max="1500" step="10" class="pll-input-sm" /><span class="pll-unit">px</span></div></td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_facade_height_mobile">Mobile <span class="pll-badge">&lt; 768px</span></label></th>
-                        <td><div class="pll-input-row"><input type="number" id="pdf_lazy_loader_facade_height_mobile" name="pdf_lazy_loader_facade_height_mobile" value="<?php echo esc_attr( $settings['facadeHeightMobile'] ); ?>" min="200" max="1000" step="10" class="pll-input-sm" /><span class="pll-unit">px</span></div></td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="pll-section">
-                <div class="pll-section__header"><span class="pll-section__icon">🛡️</span><h2 class="pll-section__title">Cloudflare Turnstile Protection</h2></div>
-                <table class="form-table pll-table">
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_enable_turnstile">Enable Turnstile</label></th>
-                        <td>
-                            <input type="hidden" name="pdf_lazy_loader_enable_turnstile" value="0" />
-                            <label class="pll-toggle">
-                                <input type="checkbox" id="pdf_lazy_loader_enable_turnstile" name="pdf_lazy_loader_enable_turnstile" value="1" <?php checked( $settings['enableTurnstile'], true ); ?> />
-                                <span class="pll-toggle__slider"></span>
-                            </label>
-                            <span class="description">Require Cloudflare Turnstile verification before viewing or downloading PDF</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_turnstile_site_key">Site Key</label></th>
-                        <td>
-                            <input type="text" id="pdf_lazy_loader_turnstile_site_key" name="pdf_lazy_loader_turnstile_site_key" value="<?php echo esc_attr( $settings['turnstileSiteKey'] ); ?>" class="regular-text" placeholder="1x00000000000000000000AA" />
-                            <span class="description">Your Cloudflare Turnstile Site Key (<a href="https://dash.cloudflare.com/?to=/:account/turnstile" target="_blank" rel="noopener">get it here</a>)</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_turnstile_secret_key">Secret Key</label></th>
-                        <td>
-                            <?php $pll_has_secret = (string) get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ) !== ''; ?>
-                            <input type="password" id="pdf_lazy_loader_turnstile_secret_key" name="pdf_lazy_loader_turnstile_secret_key" value="" autocomplete="new-password" class="regular-text" placeholder="<?php echo $pll_has_secret ? esc_attr__( '•••••••• saved — leave empty to keep', 'pdf-lazy-loader' ) : '1x0000000000000000000000000000000AA'; ?>" />
-                            <span class="description">Cloudflare Turnstile Secret Key. Used only by server-side verification below; never sent to the browser or printed back into this form.</span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_server_verify">Server-side verification</label></th>
-                        <td>
-                            <input type="hidden" name="pdf_lazy_loader_server_verify" value="0" />
-                            <label class="pll-toggle">
-                                <input type="checkbox" id="pdf_lazy_loader_server_verify" name="pdf_lazy_loader_server_verify" value="1" <?php checked( (bool) get_option( 'pdf_lazy_loader_server_verify', false ), true ); ?> />
-                                <span class="pll-toggle__slider"></span>
-                            </label>
-                            <span class="description">
-                                Validate the Turnstile token on the server (Cloudflare <code>siteverify</code>) before the PDF URL is released.
-                                The page HTML then contains only an AES-256-GCM encrypted reference instead of the XOR-obfuscated URL,
-                                so the PDF cannot be extracted from the source or opened by calling JS from the console.<br>
-                                Cost: one REST request <code>POST /wp-json/pdf-lazy-loader/v1/verify</code> per post with PDFs, on the first click
-                                (+ one outbound HTTPS call to Cloudflare, typically 30–200&nbsp;ms), no database writes.
-                                If you filter REST in Cloudflare WAF, allow this route.
-                            </span>
-                            <?php
-                            if ( get_option( 'pdf_lazy_loader_server_verify', false ) && ! pdf_lazy_loader_server_verify_active() ) {
-                                echo '<p class="description" style="color:#b3261e"><strong>' . esc_html__( 'Not active: requires Turnstile enabled, Site Key, Secret Key and PHP OpenSSL (aes-256-gcm). Falling back to client-side check.', 'pdf-lazy-loader' ) . '</strong></p>';
-                            } elseif ( pdf_lazy_loader_server_verify_active() ) {
-                                echo '<p class="description" style="color:#1a7f37"><strong>' . esc_html__( 'Active.', 'pdf-lazy-loader' ) . '</strong> <code>' . esc_html( rest_url( 'pdf-lazy-loader/v1/verify' ) ) . '</code></p>';
-                            }
-                            ?>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="pll-section">
-                <div class="pll-section__header"><span class="pll-section__icon">🐞</span><h2 class="pll-section__title">Debug Settings</h2></div>
-                <table class="form-table pll-table">
-                    <tr>
-                        <th scope="row"><label for="pdf_lazy_loader_debug_mode">Enable Debug Mode</label></th>
-                        <td>
-                            <input type="hidden" name="pdf_lazy_loader_debug_mode" value="0" />
-                            <label class="pll-toggle">
-                                <input type="checkbox" id="pdf_lazy_loader_debug_mode" name="pdf_lazy_loader_debug_mode" value="1" <?php checked( $settings['debugMode'], true ); ?> />
-                                <span class="pll-toggle__slider"></span>
-                            </label>
-                            <span class="description">Outputs detailed logs to the browser console. <strong>Disable in production.</strong></span>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="pll-footer">
-                <?php submit_button( 'Save Changes', 'primary', 'submit', false ); ?>
-                <span class="pll-version">PDF Lazy Loader v<?php echo esc_html( PDF_LAZY_LOADER_VERSION ); ?></span>
-            </div>
-        </form>
-
-        <div class="pll-info-card">
-            <div class="pll-info-card__header"><span class="pll-section__icon">👁️</span><h2 class="pll-section__title">Live Preview</h2></div>
-            <p class="pll-info-card__desc">The facade as visitors see it, with the current colors, heights and Download setting:</p>
-            <div id="pdf-lazy-loader-preview"></div>
-        </div>
-    </div>
-    <?php
+    if ( $description !== '' ) echo '<span class="description">' . esc_html( $description ) . '</span>';
+    echo '</td></tr>';
 }
 
-// ---------------------------------------------------------------------------
-// Activation / Uninstall
-// ---------------------------------------------------------------------------
+function pdf_lazy_loader_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'pdf-lazy-loader' ) );
+    $s = pdf_lazy_loader_get_settings();
+    $prefix = 'pdf_lazy_loader_';
+    $secret_saved = (string) get_option( 'pdf_lazy_loader_turnstile_secret_key', '' ) !== '';
+    $groups = array(
+        array( __( 'Appearance', 'pdf-lazy-loader' ), array(
+            array( 'button_color', __( 'Button Color', 'pdf-lazy-loader' ), 'color', $s['buttonColor'], __( 'Button and PDF icon color. A darker shade is used when required for contrast with white text.', 'pdf-lazy-loader' ) ),
+            array( 'button_color_hover', __( 'Button Hover Color', 'pdf-lazy-loader' ), 'color', $s['buttonColorHover'], __( 'Button color on hover and keyboard focus.', 'pdf-lazy-loader' ) ),
+            array( 'loading_time', __( 'Minimum Loading Time (ms)', 'pdf-lazy-loader' ), 'number', $s['loadingTime'], __( 'Minimum spinner duration (0–5000 ms), in parallel with asset loading. Default: 300 ms.', 'pdf-lazy-loader' ), array( 'min' => 0, 'max' => 5000, 'step' => 50 ) ),
+        ) ),
+        array( __( 'Downloads', 'pdf-lazy-loader' ), array(
+            array( 'enable_download', __( 'Show Download Button', 'pdf-lazy-loader' ), 'checkbox', $s['enableDownload'], __( 'Show a Download button alongside View PDF.', 'pdf-lazy-loader' ) ),
+            array( 'blob_download', __( 'Download via Blob', 'pdf-lazy-loader' ), 'checkbox', $s['blobDownload'], __( 'Applies only to the facade Download button. The complete PDF is fetched before saving. External files require CORS. The original request remains visible in developer tools; there is no direct-link fallback on failure.', 'pdf-lazy-loader' ) ),
+        ) ),
+        array( __( 'Facade Heights', 'pdf-lazy-loader' ), array(
+            array( 'facade_height_desktop', __( 'Desktop (≥ 1024 px)', 'pdf-lazy-loader' ), 'number', $s['facadeHeightDesktop'], __( 'Height in pixels.', 'pdf-lazy-loader' ), array( 'min' => 200, 'max' => 2000, 'step' => 10 ) ),
+            array( 'facade_height_tablet', __( 'Tablet (768–1023 px)', 'pdf-lazy-loader' ), 'number', $s['facadeHeightTablet'], __( 'Height in pixels.', 'pdf-lazy-loader' ), array( 'min' => 200, 'max' => 1500, 'step' => 10 ) ),
+            array( 'facade_height_mobile', __( 'Mobile (< 768 px)', 'pdf-lazy-loader' ), 'number', $s['facadeHeightMobile'], __( 'Height in pixels.', 'pdf-lazy-loader' ), array( 'min' => 200, 'max' => 1000, 'step' => 10 ) ),
+        ) ),
+        array( __( 'Cloudflare Turnstile', 'pdf-lazy-loader' ), array(
+            array( 'enable_turnstile', __( 'Enable Turnstile', 'pdf-lazy-loader' ), 'checkbox', $s['enableTurnstile'], __( 'Require verification before viewing or downloading a PDF.', 'pdf-lazy-loader' ) ),
+            array( 'turnstile_site_key', __( 'Site Key', 'pdf-lazy-loader' ), 'text', $s['turnstileSiteKey'], __( 'The site key from your Cloudflare Turnstile widget.', 'pdf-lazy-loader' ) ),
+            array( 'turnstile_secret_key', __( 'Secret Key', 'pdf-lazy-loader' ), 'password', '', __( 'Used only by server-side verification. Leave empty to keep the saved key.', 'pdf-lazy-loader' ), array( 'autocomplete' => 'new-password', 'placeholder' => $secret_saved ? __( 'Key saved', 'pdf-lazy-loader' ) : '' ) ),
+            array( 'server_verify', __( 'Server-side verification', 'pdf-lazy-loader' ), 'checkbox', (bool) get_option( 'pdf_lazy_loader_server_verify', false ), __( 'Validate the token on the server before releasing PDF URLs. Requires site and secret keys and OpenSSL (AES-256-GCM). One verification request per post with PDFs; allow the verify REST route in your firewall.', 'pdf-lazy-loader' ) ),
+        ) ),
+        array( __( 'Diagnostics', 'pdf-lazy-loader' ), array(
+            array( 'debug_mode', __( 'Enable Debug Mode', 'pdf-lazy-loader' ), 'checkbox', $s['debugMode'], __( 'Write diagnostic messages to the browser console. Disable in production.', 'pdf-lazy-loader' ) ),
+        ) ),
+    );
+    echo '<div class="wrap pdf-lazy-loader-settings"><h1>' . esc_html( get_admin_page_title() ) . '</h1>';
+    settings_errors( 'pdf_lazy_loader_settings' );
+    echo '<form method="post" action="options.php">';
+    settings_fields( 'pdf_lazy_loader_settings' );
+    foreach ( $groups as $group ) {
+        echo '<div class="pll-section"><div class="pll-section__header"><h2 class="pll-section__title">' . esc_html( $group[0] ) . '</h2></div><table class="form-table pll-table">';
+        foreach ( $group[1] as $field ) {
+            pdf_lazy_loader_admin_field( $prefix . $field[0], $field[1], $field[2], $field[3], $field[4], isset( $field[5] ) ? $field[5] : array() );
+        }
+        echo '</table></div>';
+    }
+    if ( get_option( 'pdf_lazy_loader_server_verify', false ) ) {
+        if ( pdf_lazy_loader_server_verify_active() ) {
+            echo '<p class="description">' . esc_html__( 'Server-side verification is active.', 'pdf-lazy-loader' ) . ' <code>' . esc_html( rest_url( 'pdf-lazy-loader/v1/verify' ) ) . '</code></p>';
+        } else {
+            echo '<p class="description" role="status">' . esc_html__( 'Server-side verification is not active. Check Turnstile keys and OpenSSL support. Client-side verification is used instead.', 'pdf-lazy-loader' ) . '</p>';
+        }
+    }
+    echo '<p><a href="https://dash.cloudflare.com/?to=/:account/turnstile" target="_blank" rel="noopener">' . esc_html__( 'Manage Cloudflare Turnstile widgets', 'pdf-lazy-loader' ) . '</a></p>';
+    echo '<div class="pll-footer">';
+    submit_button( __( 'Save Changes', 'pdf-lazy-loader' ), 'primary', 'submit', false );
+    echo '<span class="pll-version">PDF Lazy Loader v' . esc_html( PDF_LAZY_LOADER_VERSION ) . '</span></div></form>';
+    echo '<div class="pll-info-card"><div class="pll-info-card__header"><h2 class="pll-section__title">' . esc_html__( 'Live Preview', 'pdf-lazy-loader' ) . '</h2></div><p class="pll-info-card__desc">' . esc_html__( 'The facade with the current colors, heights and Download setting.', 'pdf-lazy-loader' ) . '</p><div id="pdf-lazy-loader-preview"></div></div></div>';
+}
+
 register_activation_hook( __FILE__, 'pdf_lazy_loader_activation' );
 function pdf_lazy_loader_activation() {
     $defaults = array(

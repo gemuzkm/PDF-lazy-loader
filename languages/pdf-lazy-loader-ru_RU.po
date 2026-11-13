@@ -1,0 +1,172 @@
+# PDF Lazy Loader translations.
+msgid ""
+msgstr "Project-Id-Version: PDF Lazy Loader 1.3.8\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\nLanguage: ru_RU\nPlural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "Appearance"
+msgstr "Оформление"
+
+msgid "Applies only to the facade Download button. The complete PDF is fetched before saving. External files require CORS. The original request remains visible in developer tools; there is no direct-link fallback on failure."
+msgstr "Применяется только к кнопке скачивания заглушки. Перед сохранением PDF загружается полностью. Для внешних файлов требуется CORS. Исходный запрос виден в инструментах разработчика; при ошибке перехода по прямой ссылке не будет."
+
+msgid "Button Color"
+msgstr "Цвет кнопки"
+
+msgid "Button Hover Color"
+msgstr "Цвет кнопки при наведении"
+
+msgid "Button and PDF icon color. A darker shade is used when required for contrast with white text."
+msgstr "Цвет кнопки и значка PDF. При необходимости используется более тёмный оттенок для контраста с белым текстом."
+
+msgid "Button color on hover and keyboard focus."
+msgstr "Цвет кнопки при наведении и фокусе с клавиатуры."
+
+msgid "Click the button below to load the document"
+msgstr "Нажмите кнопку ниже, чтобы загрузить документ"
+
+msgid "Cloudflare Turnstile"
+msgstr "Cloudflare Turnstile"
+
+msgid "Colors are darkened for WCAG AA contrast with white text: button %1$s, hover %2$s."
+msgstr "Цвета затемнены для контраста с белым текстом по WCAG AA: кнопка %1$s, при наведении %2$s."
+
+msgid "Desktop (≥ 1024 px)"
+msgstr "Компьютер (≥ 1024 px)"
+
+msgid "Diagnostics"
+msgstr "Диагностика"
+
+msgid "Document will be loaded on first access"
+msgstr "Документ загрузится при первом обращении"
+
+msgid "Download"
+msgstr "Скачать"
+
+msgid "Download failed. Please try again. External files must allow CORS."
+msgstr "Не удалось скачать файл. Повторите попытку. Для внешних файлов требуется разрешение CORS."
+
+msgid "Download via Blob"
+msgstr "Скачивание через Blob"
+
+msgid "Downloads"
+msgstr "Скачивание"
+
+msgid "Enable Debug Mode"
+msgstr "Включить режим отладки"
+
+msgid "Enable Turnstile"
+msgstr "Включить Turnstile"
+
+msgid "Facade Heights"
+msgstr "Высота заглушки"
+
+msgid "Failed to load verification."
+msgstr "Не удалось загрузить проверку."
+
+msgid "Height in pixels."
+msgstr "Высота в пикселях."
+
+msgid "Key saved"
+msgstr "Ключ сохранён"
+
+msgid "Live Preview"
+msgstr "Предпросмотр"
+
+msgid "Loading PDF..."
+msgstr "Загрузка PDF…"
+
+msgid "Manage Cloudflare Turnstile widgets"
+msgstr "Управление виджетами Cloudflare Turnstile"
+
+msgid "Minimum Loading Time (ms)"
+msgstr "Минимальное время загрузки (мс)"
+
+msgid "Minimum spinner duration (0–5000 ms), in parallel with asset loading. Default: 300 ms."
+msgstr "Минимальное время показа индикатора (0–5000 мс), параллельно загрузке файлов. По умолчанию: 300 мс."
+
+msgid "Mobile (< 768 px)"
+msgstr "Телефон (< 768 px)"
+
+msgid "PDF Document"
+msgstr "Документ PDF"
+
+msgid "PDF Lazy Loader Settings"
+msgstr "Настройки PDF Lazy Loader"
+
+msgid "Please complete verification to continue"
+msgstr "Пройдите проверку, чтобы продолжить"
+
+msgid "Preparing download..."
+msgstr "Подготовка скачивания…"
+
+msgid "Require verification before viewing or downloading a PDF."
+msgstr "Требовать проверку перед просмотром или скачиванием PDF."
+
+msgid "Save Changes"
+msgstr "Сохранить изменения"
+
+msgid "Secret Key"
+msgstr "Секретный ключ"
+
+msgid "Server-side verification"
+msgstr "Серверная проверка"
+
+msgid "Server-side verification is active."
+msgstr "Серверная проверка активна."
+
+msgid "Server-side verification is not active. Check Turnstile keys and OpenSSL support. Client-side verification is used instead."
+msgstr "Серверная проверка неактивна. Проверьте ключи Turnstile и поддержку OpenSSL. Используется клиентская проверка."
+
+msgid "Show Download Button"
+msgstr "Показывать кнопку скачивания"
+
+msgid "Show a Download button alongside View PDF."
+msgstr "Показывать кнопку «Скачать» рядом с кнопкой «Открыть PDF»."
+
+msgid "Site Key"
+msgstr "Ключ сайта"
+
+msgid "Tablet (768–1023 px)"
+msgstr "Планшет (768–1023 px)"
+
+msgid "The facade with the current colors, heights and Download setting."
+msgstr "Заглушка с текущими цветами, высотой и настройкой скачивания."
+
+msgid "The site key from your Cloudflare Turnstile widget."
+msgstr "Ключ сайта из вашего виджета Cloudflare Turnstile."
+
+msgid "This page is outdated. Please reload it."
+msgstr "Эта страница устарела. Обновите её."
+
+msgid "Try again"
+msgstr "Повторить попытку"
+
+msgid "Used only by server-side verification. Leave empty to keep the saved key."
+msgstr "Используется только для серверной проверки. Оставьте поле пустым, чтобы сохранить прежний ключ."
+
+msgid "Validate the token on the server before releasing PDF URLs. Requires site and secret keys and OpenSSL (AES-256-GCM). One verification request per post with PDFs; allow the verify REST route in your firewall."
+msgstr "Проверять токен на сервере перед выдачей адресов PDF. Нужны ключ сайта, секретный ключ и OpenSSL (AES-256-GCM). Один запрос проверки на запись с PDF; разрешите REST-маршрут проверки в межсетевом экране."
+
+msgid "Verification could not be completed. Please try again."
+msgstr "Не удалось выполнить проверку. Повторите попытку."
+
+msgid "Verification error. Refresh the page."
+msgstr "Ошибка проверки. Обновите страницу."
+
+msgid "Verification expired."
+msgstr "Срок действия проверки истёк."
+
+msgid "Verification failed."
+msgstr "Проверка не пройдена."
+
+msgid "View PDF"
+msgstr "Открыть PDF"
+
+msgid "Viewer files could not be loaded. Click View PDF to try again."
+msgstr "Не удалось загрузить файлы просмотрщика. Нажмите «Открыть PDF», чтобы повторить попытку."
+
+msgid "Write diagnostic messages to the browser console. Disable in production."
+msgstr "Выводить диагностические сообщения в консоль браузера. Отключите на рабочем сайте."
+
+msgid "You do not have sufficient permissions to access this page."
+msgstr "У вас недостаточно прав для доступа к этой странице."
+

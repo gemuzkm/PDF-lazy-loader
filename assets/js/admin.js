@@ -117,8 +117,9 @@
             '</div><p class="pdf-facade-info">' + esc(text.info) + '</p></div></div></div>';
 
         if (colors.adjusted) {
-            html += '<p class="description pll-preview-note">Colors are darkened for WCAG AA contrast with white text: button ' +
-                esc(colors.btn) + ', hover ' + esc(colors.hover) + '.</p>';
+            var note = i18n.previewContrast || 'Colors are darkened for WCAG AA contrast with white text: button %1$s, hover %2$s.';
+            note = note.replace('%1$s', colors.btn).replace('%2$s', colors.hover);
+            html += '<p class="description pll-preview-note">' + esc(note) + '</p>';
         }
         box.innerHTML = html;
     }
